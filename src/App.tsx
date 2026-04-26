@@ -45,6 +45,8 @@ const getPrizeLevel = (f: number, b: number): number => {
 // Setup initialization
 const localSupaUrl = localStorage.getItem('SUPABASE_URL') || '';
 const localSupaKey = localStorage.getItem('SUPABASE_KEY') || '';
+const localHistoryApiUrl = localStorage.getItem('HISTORY_API_URL') || '';
+
 let supabase: any = null;
 let isAdminInit = false;
 try {
@@ -145,6 +147,7 @@ export default function App() {
   // Settings State
   const [setupUrl, setSetupUrl] = useState(localSupaUrl);
   const [setupKey, setSetupKey] = useState(localSupaKey);
+  const [historyApiUrl, setHistoryApiUrl] = useState(localHistoryApiUrl);
 
   const fetchOfficialHistory = async () => {
     let loadedFromCloud = false;
@@ -205,18 +208,42 @@ export default function App() {
   const loadDrawResults = async () => {
     setIsFetchingResults(true);
     let resultsList: LottoResult[] = [];
+
+    // 0. Try custom user-configured API URL first
+    if (historyApiUrl) {
+      try {
+        const res = await fetch(historyApiUrl);
+        if (res.ok) {
+          const data = await res.json();
+          // Be flexible with the data format from custom APIs
+          if (data?.value?.list) {
+            resultsList = data.value.list;
+          } else if (data?.list) {
+            resultsList = data.list;
+          } else if (Array.isArray(data) && data[0]?.lotteryDrawNum) {
+            resultsList = data; // Raw array
+          } else if (data?.data?.list) {
+            resultsList = data.data.list;
+          }
+        }
+      } catch (err) {
+        console.warn("Custom History API failed", err);
+      }
+    }
     
     // 1. First try the local proxy (Works in Vite dev, Express, and Netlify via netlify.toml)
-    try {
-      const res = await fetch('/api/lottery/history');
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.value?.list) {
-          resultsList = data.value.list;
+    if (resultsList.length === 0) {
+      try {
+        const res = await fetch('/api/lottery/history');
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.value?.list) {
+            resultsList = data.value.list;
+          }
         }
+      } catch (err) {
+        console.warn("Local API proxy failed, falling back to JSONP", err);
       }
-    } catch (err) {
-      console.warn("Local API proxy failed, falling back to JSONP", err);
     }
     
     // 2. Attempt JSONP fallback (Bypasses some CORS and WAF)
@@ -472,6 +499,7 @@ export default function App() {
   const saveSettings = () => {
     localStorage.setItem('SUPABASE_URL', setupUrl);
     localStorage.setItem('SUPABASE_KEY', setupKey);
+    localStorage.setItem('HISTORY_API_URL', historyApiUrl);
     localStorage.setItem('theme', theme);
     window.location.reload();
   };
@@ -941,11 +969,35 @@ export default function App() {
                        </p>
                     </div>
                  </div>
+                 {/* History API Control */}
+                 <div>
+                    <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3 flex items-center gap-2 mt-4 border-t border-[var(--border-card)] pt-4">
+                       历史数据接口配置 (选填)
+                    </div>
+                    <div className="space-y-4">
+                       <div className="flex flex-col gap-1.5">
+                          <label className="text-xs text-[var(--text-disabled)]">CUSTOM_HISTORY_API_URL</label>
+                          <input 
+                             type="text" 
+                             value={historyApiUrl} 
+                             onChange={(e) => setHistoryApiUrl(e.target.value)} 
+                             className="w-full bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl px-4 py-2 text-sm text-[var(--text-main)] outline-none focus:border-green-500 transition-colors"
+                             placeholder="例如: https://api.allorigins.win/raw?url=..."
+                          />
+                       </div>
+                       <p className="text-[10px] text-[var(--text-disabled)] leading-relaxed bg-[var(--bg-hover)] p-3 rounded-lg border border-[var(--border-card)]">
+                         当因为网络限制或官方防盗链机制导致获取历史开奖数据失败（尤其在 Vercel/Netlify 等边缘节点环境中）时，可以手动指定第三方代理或者直连的源 URL。
+                       </p>
+                    </div>
+                 </div>
               </div>
 
-              <div className="mt-8 flex justify-end gap-3">
-                <button onClick={() => setShowSettingsModal(false)} className="px-5 py-2.5 text-sm font-semibold text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors">取消</button>
-                <button onClick={saveSettings} className="px-6 py-2.5 bg-green-600 text-white font-semibold text-sm rounded-full hover:bg-green-700 shadow-lg shadow-green-500/20 transition-all">保存配置并重载</button>
+              <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <button onClick={clearGuestHistory} className="w-full sm:w-auto px-4 py-2 text-xs font-semibold text-red-500 hover:bg-red-500/10 rounded-lg transition-colors border border-transparent hover:border-red-500/20">清空本地历史</button>
+                <div className="flex justify-end gap-3 w-full sm:w-auto">
+                  <button onClick={() => setShowSettingsModal(false)} className="px-5 py-2.5 text-sm font-semibold text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors">取消</button>
+                  <button onClick={saveSettings} className="px-6 py-2.5 bg-green-600 text-white font-semibold text-sm rounded-full hover:bg-green-700 shadow-lg shadow-green-500/20 transition-all">保存配置并重载</button>
+                </div>
               </div>
             </motion.div>
           </motion.div>

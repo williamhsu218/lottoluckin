@@ -13,6 +13,27 @@ async function startServer() {
   // API Proxy Route for Sports Lottery
   app.get('/api/lottery/history', async (req, res) => {
     try {
+      // Method 1: Try official Sporttery API first
+      const sportteryRes = await fetch('https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=50&isVerify=1&pageNo=1', {
+          headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Referer': 'https://www.lottery.gov.cn/'
+          }
+      });
+      
+      if (sportteryRes.ok) {
+          const data = await sportteryRes.json();
+          if (data && data.value && data.value.list && data.value.list.length > 0) {
+              res.json(data);
+              return;
+          }
+      }
+    } catch (err) {
+        console.warn("Sporttery API via Express failed, falling back to 500.com", err);
+    }
+
+    try {
+      // Method 2: Fallback to scraping datachart.500.com (very reliable)
       const response = await fetch('https://datachart.500.com/dlt/history/newinc/history.php?limit=50', {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -39,24 +60,8 @@ async function startServer() {
       console.warn("Failed to fetch from 500.com datachart", error);
     }
 
-
-    // Fallback data if API is blocked (e.g. 567 WAF block)
-    res.json({
-      value: {
-        list: [
-          { lotteryDrawNum: "23136", lotteryDrawResult: "06 09 16 23 29 05 11", lotteryDrawTime: "2023-11-27" },
-          { lotteryDrawNum: "23135", lotteryDrawResult: "01 02 08 12 26 01 07", lotteryDrawTime: "2023-11-25" },
-          { lotteryDrawNum: "23134", lotteryDrawResult: "05 11 15 23 33 01 05", lotteryDrawTime: "2023-11-22" },
-          { lotteryDrawNum: "23133", lotteryDrawResult: "02 04 11 12 35 06 07", lotteryDrawTime: "2023-11-20" },
-          { lotteryDrawNum: "23132", lotteryDrawResult: "01 08 17 22 28 01 08", lotteryDrawTime: "2023-11-18" },
-          { lotteryDrawNum: "23131", lotteryDrawResult: "05 15 26 33 35 01 07", lotteryDrawTime: "2023-11-15" },
-          { lotteryDrawNum: "23130", lotteryDrawResult: "04 18 20 22 25 01 02", lotteryDrawTime: "2023-11-13" },
-          { lotteryDrawNum: "23129", lotteryDrawResult: "01 04 05 14 30 02 04", lotteryDrawTime: "2023-11-11" },
-          { lotteryDrawNum: "23128", lotteryDrawResult: "07 12 17 26 34 02 06", lotteryDrawTime: "2023-11-08" },
-          { lotteryDrawNum: "23127", lotteryDrawResult: "04 07 08 18 33 05 08", lotteryDrawTime: "2023-11-06" }
-        ]
-      }
-    });
+    // Return empty array so client can try JSONP and CORS proxies next
+    res.json({ value: { list: [] } });
   });
 
   // Vite middleware for development
