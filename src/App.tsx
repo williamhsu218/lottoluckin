@@ -207,80 +207,84 @@ export default function App() {
     setIsFetchingResults(true);
     let resultsList: LottoResult[] = [];
     
-    // Attempt JSONP first to bypass server-side WAF block
-    try {
-      resultsList = await new Promise<LottoResult[]>((resolve, reject) => {
-        const callbackName = 'jsonp_callback_' + Math.round(1000000 * Math.random());
-        const timeout = setTimeout(() => {
-           cleanup();
-           reject(new Error('JSONP timeout'));
-        }, 5000);
-        
-        const cleanup = () => {
-           clearTimeout(timeout);
-           delete (window as any)[callbackName];
-           const el = document.getElementById(callbackName);
-           if (el) document.body.removeChild(el);
-        };
-
-        (window as any)[callbackName] = (data: any) => {
-            cleanup();
-            if (data && data.value && data.value.list) {
-               resolve(data.value.list);
-            } else {
-               reject(new Error('Invalid JSONP data'));
-            }
-        };
-        
-        const script = document.createElement('script');
-        script.id = callbackName;
-        script.src = `https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=50&isVerify=1&pageNo=1&callback=${callbackName}`;
-        script.onerror = () => {
-            cleanup();
-            reject(new Error('JSONP failed'));
-        };
-        document.body.appendChild(script);
-      });
-      
-      if (resultsList.length > 0) {
-         setLotteryResults(resultsList);
-         setIsFetchingResults(false);
-         return resultsList;
-      }
-    } catch (e) {
-       console.warn("JSONP failed, trying raw CORS proxy", e);
-    }
-    
-    if (resultsList.length === 0) {
-      try {
-        const fetchUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent('https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=50&isVerify=1&pageNo=1')}`;
-        const res = await fetch(fetchUrl);
-        if (res.ok) {
-           const data = await res.json();
-           if (data?.value?.list) {
-              setLotteryResults(data.value.list);
-              resultsList = data.value.list;
-              setIsFetchingResults(false);
-              return resultsList;
-           }
-        }
-      } catch(e) {
-         console.warn("CORS proxy failed, falling back to local proxy", e);
-      }
-    }
-
+    // 1. First try the local proxy (Works in Vite dev, Express, and Netlify via netlify.toml)
     try {
       const res = await fetch('/api/lottery/history');
       if (res.ok) {
         const data = await res.json();
         if (data?.value?.list) {
-          setLotteryResults(data.value.list);
           resultsList = data.value.list;
         }
       }
-    } catch (err) {}
+    } catch (err) {
+      console.warn("Local API proxy failed, falling back to JSONP", err);
+    }
     
+    // 2. Attempt JSONP fallback (Bypasses some CORS and WAF)
+    if (resultsList.length === 0) {
+        try {
+          resultsList = await new Promise<LottoResult[]>((resolve, reject) => {
+            const callbackName = 'jsonp_callback_' + Math.round(1000000 * Math.random());
+            const timeout = setTimeout(() => {
+               cleanup();
+               reject(new Error('JSONP timeout'));
+            }, 5000);
+            
+            const cleanup = () => {
+               clearTimeout(timeout);
+               delete (window as any)[callbackName];
+               const el = document.getElementById(callbackName);
+               if (el) document.body.removeChild(el);
+            };
+
+            (window as any)[callbackName] = (data: any) => {
+                cleanup();
+                if (data && data.value && data.value.list) {
+                   resolve(data.value.list);
+                } else {
+                   reject(new Error('Invalid JSONP data'));
+                }
+            };
+            
+            const script = document.createElement('script');
+            script.id = callbackName;
+            script.src = `https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=50&isVerify=1&pageNo=1&callback=${callbackName}`;
+            script.onerror = () => {
+                cleanup();
+                reject(new Error('JSONP failed'));
+            };
+            document.body.appendChild(script);
+          });
+        } catch (e) {
+           console.warn("JSONP failed, trying raw CORS proxy", e);
+        }
+    }
+    
+    // 3. Last resort: CORS proxy services
+    if (resultsList.length === 0) {
+      const proxies = [
+        `https://api.allorigins.win/raw?url=${encodeURIComponent('https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=50&isVerify=1&pageNo=1')}`,
+        `https://corsproxy.io/?${encodeURIComponent('https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=50&isVerify=1&pageNo=1')}`
+      ];
+      
+      for (const pxUrl of proxies) {
+          try {
+            const res = await fetch(pxUrl);
+            if (res.ok) {
+               const data = await res.json();
+               if (data?.value?.list) {
+                  resultsList = data.value.list;
+                  break; 
+               }
+            }
+          } catch(e) {
+             console.warn("CORS proxy failed", pxUrl, e);
+          }
+      }
+    }
+
     if (resultsList.length > 0) {
+       setLotteryResults(resultsList);
        localStorage.setItem('official_lottery_results', JSON.stringify(resultsList));
        if (isAdmin && supabase) {
           try {
