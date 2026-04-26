@@ -1,0 +1,39 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  --bg-main: #f8fafc;
+  --bg-card: #ffffff;
+  --border-card: #e2e8f0;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --text-disabled: #94a3b8;
+  --bg-hover: #f1f5f9;
+  --bg-input: #f8fafc;
+  --bg-modal: rgba(255, 255, 255, 0.8);
+  --scrollbar-thumb: #cbd5e1;
+}
+
+.dark {
+  --bg-main: #09090b;
+  --bg-card: #18181b;
+  --border-card: #27272a;
+  --text-main: #fafafa;
+  --text-muted: #a1a1aa;
+  --text-disabled: #71717a;
+  --bg-hover: #27272a;
+  --bg-input: #09090b;
+  --bg-modal: rgba(0, 0, 0, 0.8);
+  --scrollbar-thumb: #27272a;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
+}
