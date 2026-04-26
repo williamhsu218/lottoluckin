@@ -1,11 +1,7 @@
 [[redirects]]
   from = "/api/lottery/history"
-  to = "https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=50&isVerify=1&pageNo=1"
+  to = "/.netlify/functions/history"
   status = 200
-  force = true
-  [redirects.headers]
-    User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    Referer = "https://www.lottery.gov.cn/"
 
 [[redirects]]
   from = "/*"

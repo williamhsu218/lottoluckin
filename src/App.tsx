@@ -63,7 +63,6 @@ interface HistoryRecord {
   excluded: string; 
   purchased: boolean;
   created_at: string;
-  method?: string;
 }
 
 interface LottoResult {
@@ -109,7 +108,7 @@ export default function App() {
   
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Set<string>>(new Set());
 
-  const toggleExpand = (id: string, e: React.MouseEvent) => {
+  const toggleExpand = (id: string, e: any) => {
      e.stopPropagation();
      setExpandedHistoryIds(prev => {
         const next = new Set(prev);
@@ -446,7 +445,6 @@ export default function App() {
         back: '[]', 
         excluded: JSON.stringify({ mode: mode, pkg: pkg.name }), 
         purchased: false,
-        method: mode,
       };
 
       const newLocalRecord = { ...record, id: tempId, created_at: new Date().toISOString() };
@@ -810,7 +808,7 @@ export default function App() {
                   if (draws.length === 0) return null;
                   const mainDraw = draws[0];
                   const meta = getMetadata(item);
-                  const genMethod = item.method || meta?.mode || '未知';
+                  const genMethod = meta?.mode || '未知';
                   const methodLabels: Record<string, string> = {
                     'random': '随机漫步',
                     'iching': '易经理数',
