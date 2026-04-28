@@ -32,13 +32,11 @@ function expandDraw(draw: DrawSet): DrawSet[] {
 const getPrizeLevel = (f: number, b: number): number => {
   if (f === 5 && b === 2) return 1;
   if (f === 5 && b === 1) return 2;
-  if (f === 5 && b === 0) return 3;
-  if (f === 4 && b === 2) return 4;
-  if (f === 4 && b === 1) return 5;
-  if (f === 3 && b === 2) return 6;
-  if (f === 4 && b === 0) return 7;
-  if ((f === 3 && b === 1) || (f === 2 && b === 2)) return 8;
-  if ((f === 3 && b === 0) || (f === 1 && b === 2) || (f === 2 && b === 1) || (f === 0 && b === 2)) return 9;
+  if ((f === 5 && b === 0) || (f === 4 && b === 2)) return 3;
+  if (f === 4 && b === 1) return 4;
+  if ((f === 3 && b === 2) || (f === 4 && b === 0)) return 5;
+  if ((f === 3 && b === 1) || (f === 2 && b === 2)) return 6;
+  if ((f === 3 && b === 0) || (f === 1 && b === 2) || (f === 2 && b === 1) || (f === 0 && b === 2)) return 7;
   return 0; // No prize
 };
 
@@ -99,6 +97,7 @@ export default function App() {
   const [pkg, setPkg] = useState<PackageDef>(PACKAGES[0]);
 
   const [showBacktestModal, setShowBacktestModal] = useState(false);
+  const [backtestPage, setBacktestPage] = useState(1);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showTrendModal, setShowTrendModal] = useState(false);
   
@@ -327,12 +326,29 @@ export default function App() {
 
   const togglePurchased = async (id: string, currentStatus: boolean) => {
     // Optimistically update
-    const newHistory = history.map(h => h.id === id ? { ...h, purchased: !currentStatus } : h);
+    const purchased_at = !currentStatus ? new Date().toISOString() : undefined;
+    const newHistory = history.map(h => {
+      if (h.id === id) {
+        let meta: any = {};
+        try { meta = JSON.parse(h.excluded || '{}'); } catch(e){}
+        if (purchased_at) {
+           meta.purchased_at = purchased_at;
+        } else {
+           delete meta.purchased_at;
+        }
+        return { ...h, purchased: !currentStatus, excluded: JSON.stringify(meta) };
+      }
+      return h;
+    });
     setHistory(newHistory);
     
     if (isAdmin && supabase) {
       try {
-        const { error } = await supabase.from('draw_history').update({ purchased: !currentStatus }).eq('id', id);
+        const itemToUpdate = newHistory.find(h => h.id === id);
+        const { error } = await supabase.from('draw_history').update({ 
+          purchased: !currentStatus,
+          excluded: itemToUpdate?.excluded
+        }).eq('id', id);
         if (error) {
           setSupabaseError("锁定记录失败: " + error.message);
           setHistory(history); // revert on error
@@ -524,23 +540,42 @@ export default function App() {
   const getMetadata = (rec: HistoryRecord) => {
     try {
        const m = JSON.parse(rec.excluded || '{}');
-       if (m.mode || m.pkg) return { mode: m.mode, pkg: m.pkg };
+       return m as { mode?: number; pkg?: string; purchased_at?: string };
     }catch(e){}
     return null;
   };
 
   const checkHits = (historyRec: HistoryRecord, results: LottoResult[]) => {
     if (results.length === 0) return null;
-    const latestResult = results[0]; // Test against the latest result
+    
+    // Find the correct draw result based on purchase time
+    let meta: any = {};
+    try { meta = JSON.parse(historyRec.excluded || '{}'); } catch(e){}
+    const purchaseDate = new Date(meta.purchased_at || historyRec.created_at);
+    
+    // Convert to YYYY-MM-DD
+    const yyyy = purchaseDate.getFullYear();
+    const mm = String(purchaseDate.getMonth() + 1).padStart(2, '0');
+    const dd = String(purchaseDate.getDate()).padStart(2, '0');
+    const pDateStr = `${yyyy}-${mm}-${dd}`;
+
+    // results are ordered descending, so reversing them lets us search from oldest to newest
+    const sortedResults = [...results].reverse();
+    let targetResult = sortedResults.find(r => r.lotteryDrawTime >= pDateStr);
+    
+    if (!targetResult) {
+      targetResult = results[0]; // fallback if not found
+    }
+
     const draws = parseHistoryRecord(historyRec);
     if(draws.length === 0) return null;
 
-    const parts = latestResult.lotteryDrawResult.split(' ');
+    const parts = targetResult.lotteryDrawResult.split(' ');
     const resFront = parts.slice(0, 5).map(n => parseInt(n, 10));
     const resBack = parts.slice(5, 7).map(n => parseInt(n, 10));
 
     let bestPrize = 999;
-    let bestDrawInfo = null;
+    let bestDrawInfo: any = null;
     let comboNum = 0;
 
     draws.forEach((draw, dIdx) => {
@@ -575,7 +610,8 @@ export default function App() {
     });
 
     return { 
-      drawNum: latestResult.lotteryDrawNum, 
+      drawNum: targetResult.lotteryDrawNum, 
+      drawTime: targetResult.lotteryDrawTime,
       bestPrize: bestPrize === 999 ? 0 : bestPrize,
       ...bestDrawInfo,
       comboNum,
@@ -1042,47 +1078,69 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {history.filter(h => h.purchased).map((record) => {
-                       const matchRes = checkHits(record, lotteryResults);
-                       const meta = getMetadata(record);
-                       
-                       return (
-                         <div key={"bt-" + record.id} className="bg-[var(--bg-input)] rounded-xl p-4 border border-[var(--border-card)]">
-                           <div className="flex justify-between items-center mb-3 border-b border-[var(--border-card)] pb-2">
-                             <div className="text-sm font-semibold flex gap-2 items-center text-[var(--text-main)]">
-                               {format(new Date(record.created_at), 'MM-dd')} 推演记录
-                               {meta?.pkg && <span className="bg-[var(--bg-hover)] text-[10px] text-[var(--text-muted)] px-2 py-0.5 rounded-full">{meta.pkg}</span>}
-                             </div>
-                             <span className="text-[10px] text-green-700 dark:text-green-500 bg-green-500/10 px-2 py-1 rounded font-bold">已购记录保真</span>
-                           </div>
-                           
-                           {matchRes && (matchRes.pLevel > 0 || matchRes.fHits.length > 0 || matchRes.bHits.length > 0) ? (
-                             <div className="bg-[var(--bg-card)] rounded-lg p-3 border border-[var(--border-card)] shadow-sm">
-                               <div className="text-[11px] text-[var(--text-muted)] mb-2 flex justify-between">
-                                  <span>校验开奖: 最新第 <span className="text-[var(--text-main)] font-mono font-bold mr-1">{matchRes.drawNum}</span>期 (组合子项 #{matchRes.comboNum})</span>
-                                  {matchRes.bestPrize > 0 ? (
-                                    <span className="text-amber-600 dark:text-amber-400 font-bold bg-amber-500/10 px-2 rounded">🎉 {matchRes.bestPrize}等奖! (对中 {matchRes.fHits.length}+{matchRes.bHits.length})</span>
-                                  ) : (
-                                    <span className="text-[var(--text-disabled)] font-bold px-2 rounded">未中奖 (最高对中 {matchRes.fHits.length}+{matchRes.bHits.length})</span>
-                                  )}
+                    {(() => {
+                        const purchasedRecords = history.filter(h => h.purchased).sort((a,b) => {
+                           const tA = getMetadata(a)?.purchased_at || a.created_at;
+                           const tB = getMetadata(b)?.purchased_at || b.created_at;
+                           return new Date(tB).getTime() - new Date(tA).getTime();
+                        });
+                        const totalPages = Math.ceil(purchasedRecords.length / 3);
+                        const currentRecords = purchasedRecords.slice((backtestPage - 1) * 3, backtestPage * 3);
+
+                        return (
+                           <>
+                             {currentRecords.map((record) => {
+                               const matchRes = checkHits(record, lotteryResults);
+                               const meta = getMetadata(record);
+                               
+                               return (
+                                 <div key={"bt-" + record.id} className="bg-[var(--bg-input)] rounded-xl p-4 border border-[var(--border-card)]">
+                                   <div className="flex justify-between items-center mb-3 border-b border-[var(--border-card)] pb-2">
+                                     <div className="text-sm font-semibold flex gap-2 items-center text-[var(--text-main)]">
+                                       {format(new Date(meta?.purchased_at || record.created_at), 'MM-dd HH:mm')} 购买记录
+                                       {meta?.pkg && <span className="bg-[var(--bg-hover)] text-[10px] text-[var(--text-muted)] px-2 py-0.5 rounded-full">{meta.pkg}</span>}
+                                     </div>
+                                     <span className="text-[10px] text-green-700 dark:text-green-500 bg-green-500/10 px-2 py-1 rounded font-bold">已实购</span>
+                                   </div>
+                                   
+                                   {matchRes && (matchRes.pLevel > 0 || matchRes.fHits?.length > 0 || matchRes.bHits?.length > 0) ? (
+                                     <div className="bg-[var(--bg-card)] rounded-lg p-3 border border-[var(--border-card)] shadow-sm">
+                                       <div className="text-[11px] text-[var(--text-muted)] mb-2 flex flex-col gap-1 sm:flex-row sm:justify-between sm:items-center">
+                                          <span>校验开奖: 最新第 <span className="text-[var(--text-main)] font-mono font-bold mr-1">{matchRes.drawNum}</span>期 (第#{matchRes.comboNum}注)</span>
+                                          {matchRes.bestPrize > 0 ? (
+                                            <span className="text-amber-600 dark:text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded self-start sm:self-auto">🎉 {matchRes.bestPrize}等奖! (对中 {matchRes.fHits.length}+{matchRes.bHits.length})</span>
+                                          ) : (
+                                            <span className="text-[var(--text-disabled)] font-bold px-2 py-0.5 rounded self-start sm:self-auto border border-[var(--bg-hover)]">未中奖 (最高对 {matchRes.fHits.length}+{matchRes.bHits.length})</span>
+                                          )}
+                                       </div>
+                                       <div className="flex flex-col gap-1 text-xs font-mono bg-[var(--bg-input)] border border-[var(--border-card)] p-2 rounded">
+                                          <div className="text-[var(--text-disabled)] flex items-center">
+                                            <span className="w-16">红球命中:</span> 
+                                            <span className="text-red-500 dark:text-red-400 font-bold ml-2 tracking-widest">{matchRes.fHits.length > 0 ? matchRes.fHits.map(formatNumber).join(' ') : '--'}</span>
+                                          </div>
+                                          <div className="text-[var(--text-disabled)] flex items-center">
+                                            <span className="w-16">蓝球命中:</span> 
+                                            <span className="text-blue-500 dark:text-blue-400 font-bold ml-2 tracking-widest">{matchRes.bHits.length > 0 ? matchRes.bHits.map(formatNumber).join(' ') : '--'}</span>
+                                          </div>
+                                       </div>
+                                     </div>
+                                   ) : (
+                                     <div className="text-xs text-[var(--text-disabled)] italic p-2 text-center bg-[var(--bg-card)] rounded-lg border border-[var(--border-card)]">无法匹配开奖数据，或者此套票中没有任何一注击中目标期号。</div>
+                                   )}
+                                 </div>
+                               )
+                             })}
+                             
+                             {totalPages > 1 && (
+                               <div className="flex justify-center items-center gap-3 mt-6 border-t border-[var(--border-card)] pt-4">
+                                 <button disabled={backtestPage <= 1} onClick={() => setBacktestPage(p=>p-1)} className="px-3 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-md text-xs disabled:opacity-30 text-[var(--text-main)] hover:bg-[var(--bg-hover)] transition-colors">上一页</button>
+                                 <span className="text-[11px] text-[var(--text-muted)] font-mono">{backtestPage} / {totalPages}</span>
+                                 <button disabled={backtestPage >= totalPages} onClick={() => setBacktestPage(p=>p+1)} className="px-3 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-md text-xs disabled:opacity-30 text-[var(--text-main)] hover:bg-[var(--bg-hover)] transition-colors">下一页</button>
                                </div>
-                               <div className="flex flex-col gap-1 text-xs font-mono bg-[var(--bg-input)] border border-[var(--border-card)] p-2 rounded">
-                                  <div className="text-[var(--text-disabled)] flex items-center">
-                                    <span className="w-16">红球命中:</span> 
-                                    <span className="text-red-500 dark:text-red-400 font-bold ml-2 tracking-widest">{matchRes.fHits.length > 0 ? matchRes.fHits.map(formatNumber).join(' ') : '--'}</span>
-                                  </div>
-                                  <div className="text-[var(--text-disabled)] flex items-center">
-                                    <span className="w-16">蓝球命中:</span> 
-                                    <span className="text-blue-500 dark:text-blue-400 font-bold ml-2 tracking-widest">{matchRes.bHits.length > 0 ? matchRes.bHits.map(formatNumber).join(' ') : '--'}</span>
-                                  </div>
-                               </div>
-                             </div>
-                           ) : (
-                             <div className="text-xs text-[var(--text-disabled)] italic p-2 text-center bg-[var(--bg-card)] rounded-lg border border-[var(--border-card)]">此套票中没有任何一注击中最新开奖球号，下次一定有运！</div>
-                           )}
-                         </div>
-                       )
-                    })}
+                             )}
+                           </>
+                        );
+                    })()}
                   </div>
                 )}
               </div>
