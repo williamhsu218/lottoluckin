@@ -40,6 +40,19 @@ const getPrizeLevel = (f: number, b: number): number => {
   return 0; // No prize
 };
 
+const getPrizeAmount = (level: number): string => {
+  switch (level) {
+    case 1: return "单注最高1000万";
+    case 2: return "单注可达数十万";
+    case 3: return "10,000元";
+    case 4: return "3,000元";
+    case 5: return "300元";
+    case 6: return "15元";
+    case 7: return "5元";
+    default: return "-";
+  }
+};
+
 // Setup initialization
 const localSupaUrl = localStorage.getItem('SUPABASE_URL') || '';
 const localSupaKey = localStorage.getItem('SUPABASE_KEY') || '';
@@ -553,10 +566,16 @@ export default function App() {
     try { meta = JSON.parse(historyRec.excluded || '{}'); } catch(e){}
     const purchaseDate = new Date(meta.purchased_at || historyRec.created_at);
     
+    // 过了当晚9点（21:00）购买匹配至下一天的开奖
+    let drawDate = new Date(purchaseDate);
+    if (purchaseDate.getHours() >= 21) {
+      drawDate.setDate(drawDate.getDate() + 1);
+    }
+    
     // Convert to YYYY-MM-DD
-    const yyyy = purchaseDate.getFullYear();
-    const mm = String(purchaseDate.getMonth() + 1).padStart(2, '0');
-    const dd = String(purchaseDate.getDate()).padStart(2, '0');
+    const yyyy = drawDate.getFullYear();
+    const mm = String(drawDate.getMonth() + 1).padStart(2, '0');
+    const dd = String(drawDate.getDate()).padStart(2, '0');
     const pDateStr = `${yyyy}-${mm}-${dd}`;
 
     // results are ordered descending, so reversing them lets us search from oldest to newest
@@ -564,7 +583,7 @@ export default function App() {
     let targetResult = sortedResults.find(r => r.lotteryDrawTime >= pDateStr);
     
     if (!targetResult) {
-      targetResult = results[0]; // fallback if not found
+      return { isWaiting: true }; // No result available yet for this ticket
     }
 
     const draws = parseHistoryRecord(historyRec);
@@ -574,37 +593,41 @@ export default function App() {
     const resFront = parts.slice(0, 5).map(n => parseInt(n, 10));
     const resBack = parts.slice(5, 7).map(n => parseInt(n, 10));
 
-    let bestPrize = 999;
-    let bestDrawInfo: any = null;
-    let comboNum = 0;
+    const winningCombos: any[] = [];
+    let bestNoPrizeInfo: any = null;
+    let bestNoPrizeScore = -1;
+    let bestNoPrizeComboNum = 0;
+    let overallLines = 0;
 
     draws.forEach((draw, dIdx) => {
       const expanded = expandDraw(draw);
-      expanded.forEach(cmb => {
-         const fHitsCount = cmb.front.filter(n => resFront.includes(n)).length;
-         const bHitsCount = cmb.back.filter(n => resBack.includes(n)).length;
-         const pLevel = getPrizeLevel(fHitsCount, bHitsCount);
+      overallLines += expanded.length;
+      expanded.forEach((cmb, cIdx) => {
+         const fHits = cmb.front.filter(n => resFront.includes(n));
+         const bHits = cmb.back.filter(n => resBack.includes(n));
+         const pLevel = getPrizeLevel(fHits.length, bHits.length);
          
-         const score = (fHitsCount * 2) + bHitsCount; // used for no-prize best match
-         const currentBestScore = bestDrawInfo ? (bestDrawInfo.fHits.length * 2 + bestDrawInfo.bHits.length) : -1;
+         const score = (fHits.length * 2) + bHits.length;
 
          if (pLevel > 0) {
-            if (pLevel < bestPrize) {
-               bestPrize = pLevel;
-               bestDrawInfo = {
-                  pLevel,
-                  fHits: cmb.front.filter(n => resFront.includes(n)),
-                  bHits: cmb.back.filter(n => resBack.includes(n))
-               };
-               comboNum = dIdx + 1;
-            }
-         } else if (bestPrize === 999 && score > currentBestScore) {
-             bestDrawInfo = {
+             winningCombos.push({
+                comboNum: dIdx + 1,
+                comboId: cIdx + 1,
+                pLevel,
+                amount: getPrizeAmount(pLevel),
+                fHits,
+                bHits,
+                frontStr: cmb.front.join(' '),
+                backStr: cmb.back.join(' ')
+             });
+         } else if (winningCombos.length === 0 && score > bestNoPrizeScore) {
+             bestNoPrizeScore = score;
+             bestNoPrizeInfo = {
                 pLevel: 0,
-                fHits: cmb.front.filter(n => resFront.includes(n)),
-                bHits: cmb.back.filter(n => resBack.includes(n))
+                fHits,
+                bHits
              };
-             comboNum = dIdx + 1;
+             bestNoPrizeComboNum = dIdx + 1;
          }
       });
     });
@@ -612,10 +635,10 @@ export default function App() {
     return { 
       drawNum: targetResult.lotteryDrawNum, 
       drawTime: targetResult.lotteryDrawTime,
-      bestPrize: bestPrize === 999 ? 0 : bestPrize,
-      ...bestDrawInfo,
-      comboNum,
-      totalLines: draws.length 
+      winningCombos: winningCombos.sort((a,b) => a.pLevel - b.pLevel),
+      bestNoPrizeInfo: winningCombos.length === 0 ? bestNoPrizeInfo : null,
+      bestNoPrizeComboNum,
+      totalLines: overallLines 
     };
   };
 
@@ -1103,29 +1126,58 @@ export default function App() {
                                      <span className="text-[10px] text-green-700 dark:text-green-500 bg-green-500/10 px-2 py-1 rounded font-bold">已实购</span>
                                    </div>
                                    
-                                   {matchRes && (matchRes.pLevel > 0 || matchRes.fHits?.length > 0 || matchRes.bHits?.length > 0) ? (
+                                   {matchRes?.isWaiting ? (
+                                      <div className="bg-[var(--bg-card)] rounded-lg p-3 border border-[var(--border-card)] shadow-sm text-center">
+                                          <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">⏳ 待开奖</div>
+                                          <div className="text-[11px] text-[var(--text-disabled)] mt-1">此实购号码对应的开奖结果尚未公布</div>
+                                      </div>
+                                   ) : matchRes && matchRes.winningCombos.length > 0 ? (
+                                     <div className="flex flex-col gap-2">
+                                        <div className="text-[11px] text-[var(--text-muted)] flex items-center justify-between">
+                                            <span>校验开奖: 第 <span className="text-[var(--text-main)] font-mono font-bold mr-1">{matchRes.drawNum}</span>期</span>
+                                            <span className="text-amber-600 dark:text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded">🎉 中奖 {matchRes.winningCombos.length} 注</span>
+                                        </div>
+                                        {matchRes.winningCombos.map((combo: any, idx: number) => (
+                                          <div key={idx} className="bg-[var(--bg-card)] rounded-lg p-3 border border-amber-500/30 shadow-sm relative overflow-hidden">
+                                            <div className="absolute top-0 right-0 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] font-bold px-2 py-1 rounded-bl-lg">
+                                               {combo.pLevel}等奖: {combo.amount}
+                                            </div>
+                                            <div className="text-[11px] text-[var(--text-disabled)] mb-1 mt-1">
+                                               [第 {combo.comboNum} 行] 拆分注 #{combo.comboId}
+                                            </div>
+                                            <div className="flex flex-col gap-1 text-xs font-mono bg-[var(--bg-input)] border border-[var(--border-card)] p-2 rounded">
+                                               <div className="text-[var(--text-main)] break-all mt-1">
+                                                  <span className="text-red-500/70 dark:text-red-400/70">{combo.frontStr}</span> <span className="text-[var(--text-disabled)] mx-1">|</span> <span className="text-blue-500/70 dark:text-blue-400/70">{combo.backStr}</span>
+                                               </div>
+                                               <div className="text-[var(--text-disabled)] mt-1 border-t border-[var(--border-card)] pt-2 flex items-center">
+                                                 <span className="w-10">命中:</span> 
+                                                 <span className="text-red-500 dark:text-red-400 font-bold tracking-widest">{combo.fHits.length > 0 ? combo.fHits.map((n: number) => n.toString().padStart(2, '0')).join(' ') : '--'}</span>
+                                                 {combo.fHits.length > 0 && combo.bHits.length > 0 && <span className="mx-2">+</span>}
+                                                 <span className="text-blue-500 dark:text-blue-400 font-bold tracking-widest">{combo.bHits.length > 0 ? combo.bHits.map((n: number) => n.toString().padStart(2, '0')).join(' ') : (combo.fHits.length === 0 ? '--' : '')}</span>
+                                               </div>
+                                            </div>
+                                          </div>
+                                        ))}
+                                     </div>
+                                   ) : matchRes && matchRes.bestNoPrizeInfo && (matchRes.bestNoPrizeInfo.fHits.length > 0 || matchRes.bestNoPrizeInfo.bHits.length > 0) ? (
                                      <div className="bg-[var(--bg-card)] rounded-lg p-3 border border-[var(--border-card)] shadow-sm">
                                        <div className="text-[11px] text-[var(--text-muted)] mb-2 flex flex-col gap-1 sm:flex-row sm:justify-between sm:items-center">
-                                          <span>校验开奖: 最新第 <span className="text-[var(--text-main)] font-mono font-bold mr-1">{matchRes.drawNum}</span>期 (第#{matchRes.comboNum}注)</span>
-                                          {matchRes.bestPrize > 0 ? (
-                                            <span className="text-amber-600 dark:text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded self-start sm:self-auto">🎉 {matchRes.bestPrize}等奖! (对中 {matchRes.fHits.length}+{matchRes.bHits.length})</span>
-                                          ) : (
-                                            <span className="text-[var(--text-disabled)] font-bold px-2 py-0.5 rounded self-start sm:self-auto border border-[var(--bg-hover)]">未中奖 (最高对 {matchRes.fHits.length}+{matchRes.bHits.length})</span>
-                                          )}
+                                          <span>校验开奖: 第 <span className="text-[var(--text-main)] font-mono font-bold mr-1">{matchRes.drawNum}</span>期 (第{matchRes.bestNoPrizeComboNum}行最高对 {matchRes.bestNoPrizeInfo.fHits.length}+{matchRes.bestNoPrizeInfo.bHits.length})</span>
+                                          <span className="text-[var(--text-disabled)] font-bold px-2 py-0.5 rounded self-start sm:self-auto border border-[var(--bg-hover)]">未中奖</span>
                                        </div>
                                        <div className="flex flex-col gap-1 text-xs font-mono bg-[var(--bg-input)] border border-[var(--border-card)] p-2 rounded">
                                           <div className="text-[var(--text-disabled)] flex items-center">
                                             <span className="w-16">红球命中:</span> 
-                                            <span className="text-red-500 dark:text-red-400 font-bold ml-2 tracking-widest">{matchRes.fHits.length > 0 ? matchRes.fHits.map(formatNumber).join(' ') : '--'}</span>
+                                            <span className="text-[var(--text-main)] font-bold ml-2 tracking-widest">{matchRes.bestNoPrizeInfo.fHits.length > 0 ? matchRes.bestNoPrizeInfo.fHits.map((n: number) => n.toString().padStart(2, '0')).join(' ') : '--'}</span>
                                           </div>
                                           <div className="text-[var(--text-disabled)] flex items-center">
                                             <span className="w-16">蓝球命中:</span> 
-                                            <span className="text-blue-500 dark:text-blue-400 font-bold ml-2 tracking-widest">{matchRes.bHits.length > 0 ? matchRes.bHits.map(formatNumber).join(' ') : '--'}</span>
+                                            <span className="text-[var(--text-main)] font-bold ml-2 tracking-widest">{matchRes.bestNoPrizeInfo.bHits.length > 0 ? matchRes.bestNoPrizeInfo.bHits.map((n: number) => n.toString().padStart(2, '0')).join(' ') : '--'}</span>
                                           </div>
                                        </div>
                                      </div>
                                    ) : (
-                                     <div className="text-xs text-[var(--text-disabled)] italic p-2 text-center bg-[var(--bg-card)] rounded-lg border border-[var(--border-card)]">无法匹配开奖数据，或者此套票中没有任何一注击中目标期号。</div>
+                                     <div className="text-xs text-[var(--text-disabled)] italic p-2 text-center bg-[var(--bg-card)] rounded-lg border border-[var(--border-card)]">未产生任何命中号码，或者找不到可用于匹配的数据。</div>
                                    )}
                                  </div>
                                )
