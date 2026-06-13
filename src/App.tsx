@@ -39,8 +39,20 @@ interface HistoryRecord {
   user_id?: string;
 }
 
+type GenerationSource = 'random_local' | 'weighted_local' | 'iching_local' | 'local_fallback' | 'custom_llm' | 'gemini';
+
+const sourceLabels: Record<GenerationSource, string> = {
+  random_local: '本地随机',
+  weighted_local: '本地走势',
+  iching_local: '本地易经',
+  local_fallback: '本地回退',
+  custom_llm: 'AI 推演',
+  gemini: 'Gemini 推演',
+};
+
 export default function App() {
   const [currentDraws, setCurrentDraws] = useState<DrawSet[]>([]);
+  const [currentSource, setCurrentSource] = useState<GenerationSource | null>(null);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
   
@@ -544,6 +556,7 @@ export default function App() {
     setTimeout(async () => {
       try {
         let finalDraws: DrawSet[] = [];
+        let generationSource: GenerationSource | null = null;
         const isStats = mode === 'stats' && activeResults.length > 0;
         const isIChing = mode === 'iching';
 
@@ -559,6 +572,7 @@ export default function App() {
               const data = await res.json();
               if (Array.isArray(data?.draws)) {
                 finalDraws = data.draws;
+                generationSource = data.source === 'custom_llm' || data.source === 'gemini' ? data.source : 'custom_llm';
               }
             } else if (res.status !== 503) {
               const errStr = await res.text();
@@ -588,16 +602,20 @@ export default function App() {
             }
           });
           finalDraws = newDraws;
+          generationSource = isStats || isIChing
+            ? 'local_fallback'
+            : 'random_local';
         }
 
         setCurrentDraws(finalDraws);
+        setCurrentSource(generationSource);
         setIsAnimating(false);
 
         const tempId = String(Date.now());
         const record = {
           front: JSON.stringify(finalDraws),
           back: '[]', 
-          excluded: JSON.stringify({ mode: mode, pkg: pkg.name }), 
+          excluded: JSON.stringify({ mode: mode, pkg: pkg.name, source: generationSource }),
           purchased: false,
         };
 
@@ -811,6 +829,15 @@ export default function App() {
                     <div className="flex items-center gap-2">
                        <span>Current Sequence ({pkg.name} | 共 {currentDraws.length} 组)</span>
                        {currentDraws.length > 0 && <span className="inline-block text-[var(--text-muted)] bg-[var(--bg-hover)] px-2 py-0.5 rounded text-[10px]">滑动查看</span>}
+                       {currentSource && (
+                         <span className={`inline-block px-2 py-0.5 rounded text-[10px] border ${
+                           currentSource === 'custom_llm' || currentSource === 'gemini'
+                             ? 'text-emerald-600 bg-emerald-500/10 border-emerald-500/20'
+                             : 'text-amber-600 bg-amber-500/10 border-amber-500/20'
+                         }`}>
+                           来源: {sourceLabels[currentSource]}
+                         </span>
+                       )}
                     </div>
                  </div>
 

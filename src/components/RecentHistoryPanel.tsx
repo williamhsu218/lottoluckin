@@ -30,10 +30,19 @@ const methodLabels: Record<string, string> = {
   stats: '走势分析',
 };
 
+const sourceLabels: Record<string, string> = {
+  random_local: '本地随机',
+  weighted_local: '本地走势',
+  iching_local: '本地易经',
+  local_fallback: '本地回退',
+  custom_llm: 'AI 推演',
+  gemini: 'Gemini 推演',
+};
+
 const getMetadata = (rec: HistoryRecord) => {
   try {
     const m = JSON.parse(rec.excluded || '{}');
-    return m as { mode?: string; pkg?: string; purchased_at?: string };
+    return m as { mode?: string; pkg?: string; source?: string; purchased_at?: string };
   } catch (e) {}
   return null;
 };
@@ -132,6 +141,8 @@ function RecentHistoryItem({
   const meta = getMetadata(item);
   const genMethod = meta?.mode || '未知';
   const methodLabel = methodLabels[genMethod] || genMethod;
+  const sourceLabel = meta?.source ? sourceLabels[meta.source] || meta.source : null;
+  const isAiSource = meta?.source === 'custom_llm' || meta?.source === 'gemini';
 
   return (
     <div
@@ -150,6 +161,15 @@ function RecentHistoryItem({
           <span className="ml-2 text-[9px] bg-[var(--bg-card)] border border-[var(--border-card)] text-[var(--text-muted)] px-1.5 py-0.5 rounded-md font-sans">
             模式: {methodLabel}
           </span>
+          {sourceLabel && (
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-md border font-sans ${
+              isAiSource
+                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600'
+                : 'bg-amber-500/10 border-amber-500/20 text-amber-600'
+            }`}>
+              来源: {sourceLabel}
+            </span>
+          )}
         </div>
 
         {expanded && draws.length > 1 && (

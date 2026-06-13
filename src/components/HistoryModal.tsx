@@ -37,7 +37,7 @@ interface HistoryModalProps {
 const getMetadata = (rec: HistoryRecord) => {
   try {
     const m = JSON.parse(rec.excluded || '{}');
-    return m as { mode?: string; pkg?: string; purchased_at?: string };
+    return m as { mode?: string; pkg?: string; source?: string; purchased_at?: string };
   } catch (e) {}
   return null;
 };
@@ -46,6 +46,15 @@ const methodLabels: Record<string, string> = {
   random: '随机漫步',
   iching: '易经理数',
   stats: '走势分析',
+};
+
+const sourceLabels: Record<string, string> = {
+  random_local: '本地随机',
+  weighted_local: '本地走势',
+  iching_local: '本地易经',
+  local_fallback: '本地回退',
+  custom_llm: 'AI 推演',
+  gemini: 'Gemini 推演',
 };
 
 export default function HistoryModal({
@@ -383,6 +392,8 @@ function GeneratedHistoryCard({
   const mainDraw = draws[0];
   const meta = getMetadata(item);
   const methodLabel = methodLabels[meta?.mode || ''] || '未知';
+  const sourceLabel = meta?.source ? sourceLabels[meta.source] || meta.source : null;
+  const isAiSource = meta?.source === 'custom_llm' || meta?.source === 'gemini';
 
   return (
     <div className="flex flex-col p-4 bg-[var(--bg-input)] hover:bg-[var(--bg-hover)] border border-[var(--border-card)] rounded-xl transition-colors relative cursor-pointer" onClick={e => onToggleExpand(item.id, e)}>
@@ -414,6 +425,15 @@ function GeneratedHistoryCard({
             {methodLabel}
           </span>
           {meta?.pkg && <span className="text-[9px] bg-[var(--bg-hover)] border border-[var(--border-card)] text-[var(--text-muted)] px-1.5 py-0.5 rounded-md">{meta.pkg}</span>}
+          {sourceLabel && (
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-md border ${
+              isAiSource
+                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600'
+                : 'bg-amber-500/10 border-amber-500/20 text-amber-600'
+            }`}>
+              {sourceLabel}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {draws.length > 1 && (

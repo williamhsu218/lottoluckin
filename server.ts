@@ -45,8 +45,7 @@ async function startServer() {
         return res.status(400).json({ error: 'Invalid generation request' });
       }
 
-      const draws = await generateAiDraws({ mode, pkg, results });
-      res.json({ draws });
+      res.json(await generateAiDraws({ mode, pkg, results }));
     } catch (err: any) {
       const status = err.message === 'Server AI key is not configured' ? 503 : 500;
       res.status(status).json({ error: err.message });

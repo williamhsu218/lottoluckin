@@ -72,7 +72,10 @@ async function generateAiDraws(input) {
     if (!res.ok) throw new Error(`Custom LLM Error: ${res.status} ${res.statusText}`);
     const jsonResp = await res.json();
     const textResponse = jsonResp.choices?.[0]?.message?.content || jsonResp.message?.content || '';
-    return parseAiDraws(parseJsonishArray(textResponse));
+    return {
+      draws: parseAiDraws(parseJsonishArray(textResponse)),
+      source: 'custom_llm',
+    };
   }
 
   const geminiKey = process.env.GEMINI_API_KEY?.trim();
@@ -99,7 +102,10 @@ async function generateAiDraws(input) {
     },
   });
 
-  return parseAiDraws(parseJsonishArray(response.text?.trim() || '[]'));
+  return {
+    draws: parseAiDraws(parseJsonishArray(response.text?.trim() || '[]')),
+    source: 'gemini',
+  };
 }
 
 export async function handler(event) {
@@ -117,7 +123,7 @@ export async function handler(event) {
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ draws: await generateAiDraws({ mode, pkg, results }) }),
+      body: JSON.stringify(await generateAiDraws({ mode, pkg, results })),
     };
   } catch (err) {
     const statusCode = err.message === 'Server AI key is not configured' ? 503 : 500;

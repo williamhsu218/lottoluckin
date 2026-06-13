@@ -2,7 +2,12 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { buildAiPrompt, parseAiDraws, parseJsonishArray, type AiGenerateRequest } from '../shared/ai';
 import type { DrawSet } from '../shared/lottery';
 
-export async function generateAiDraws(input: AiGenerateRequest): Promise<DrawSet[]> {
+export type AiGenerateResult = {
+  draws: DrawSet[];
+  source: 'custom_llm' | 'gemini';
+};
+
+export async function generateAiDraws(input: AiGenerateRequest): Promise<AiGenerateResult> {
   const { prompt, systemInstruction } = buildAiPrompt(input);
   const customUrl = process.env.LLM_API_URL?.trim();
 
@@ -34,7 +39,10 @@ export async function generateAiDraws(input: AiGenerateRequest): Promise<DrawSet
 
     const jsonResp = await res.json();
     const textResponse = jsonResp.choices?.[0]?.message?.content || jsonResp.message?.content || '';
-    return parseAiDraws(parseJsonishArray(textResponse));
+    return {
+      draws: parseAiDraws(parseJsonishArray(textResponse)),
+      source: 'custom_llm',
+    };
   }
 
   const geminiKey = process.env.GEMINI_API_KEY?.trim();
@@ -63,5 +71,8 @@ export async function generateAiDraws(input: AiGenerateRequest): Promise<DrawSet
     },
   });
 
-  return parseAiDraws(parseJsonishArray(response.text?.trim() || '[]'));
+  return {
+    draws: parseAiDraws(parseJsonishArray(response.text?.trim() || '[]')),
+    source: 'gemini',
+  };
 }
