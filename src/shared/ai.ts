@@ -31,20 +31,6 @@ export function buildAiPrompt({ mode, pkg, results }: AiGenerateRequest) {
 }
 
 export function parseAiDraws(value: unknown): DrawSet[] {
-  const getItems = (input: unknown): unknown[] => {
-    if (Array.isArray(input)) return input;
-    if (!input || typeof input !== 'object') return [];
-
-    const record = input as any;
-    for (const key of ['draws', 'numbers', 'results', 'combinations', 'tickets']) {
-      if (Array.isArray(record[key])) return record[key];
-    }
-
-    return record.front || record.red || record.reds || record.frontNumbers || record.frontBalls || record.back || record.blue || record.blues || record.backNumbers || record.backBalls || record['前区'] || record['后区']
-      ? [record]
-      : [];
-  };
-
   const toNumberList = (input: unknown): number[] => {
     const raw = Array.isArray(input)
       ? input
@@ -58,13 +44,52 @@ export function parseAiDraws(value: unknown): DrawSet[] {
       .sort((a: number, b: number) => a - b);
   };
 
-  return getItems(value)
-    .map((item: any) => {
-      const front = toNumberList(item?.front ?? item?.red ?? item?.reds ?? item?.frontNumbers ?? item?.frontBalls ?? item?.['前区'] ?? item?.['前区号码']);
-      const back = toNumberList(item?.back ?? item?.blue ?? item?.blues ?? item?.backNumbers ?? item?.backBalls ?? item?.['后区'] ?? item?.['后区号码']);
-      return { front, back };
-    })
-    .filter(draw => draw.front.length > 0 && draw.back.length > 0);
+  const normalizeDraw = (item: any): DrawSet | null => {
+    if (!item || typeof item !== 'object') return null;
+
+    const front = toNumberList(
+      item.front ?? item.fronts ?? item.red ?? item.reds ?? item.redBalls ?? item.red_balls ??
+      item.redNumbers ?? item.frontNumbers ?? item.frontBalls ?? item.front_area ?? item.frontArea ??
+      item.front_zone ?? item.frontZone ?? item.qianqu ?? item['前区'] ?? item['前区号码'] ?? item['红球'],
+    );
+    const back = toNumberList(
+      item.back ?? item.backs ?? item.blue ?? item.blues ?? item.blueBalls ?? item.blue_balls ??
+      item.blueNumbers ?? item.backNumbers ?? item.backBalls ?? item.back_area ?? item.backArea ??
+      item.back_zone ?? item.backZone ?? item.houqu ?? item['后区'] ?? item['后区号码'] ?? item['蓝球'],
+    );
+
+    return front.length > 0 && back.length > 0 ? { front, back } : null;
+  };
+
+  const collectDraws = (input: unknown, depth = 0): DrawSet[] => {
+    if (depth > 8 || input == null) return [];
+    if (typeof input === 'string') {
+      try {
+        return collectDraws(parseJsonishArray(input), depth + 1);
+      } catch (e) {
+        return [];
+      }
+    }
+
+    if (Array.isArray(input)) {
+      return input.flatMap(item => collectDraws(item, depth + 1));
+    }
+
+    if (typeof input !== 'object') return [];
+
+    const direct = normalizeDraw(input);
+    if (direct) return [direct];
+
+    return Object.values(input as Record<string, unknown>).flatMap(value => collectDraws(value, depth + 1));
+  };
+
+  const seen = new Set<string>();
+  return collectDraws(value).filter(draw => {
+    const key = `${draw.front.join(',')}|${draw.back.join(',')}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function parseJsonishArray(text: string) {

@@ -55,10 +55,10 @@ export async function generateAiDraws(input: AiGenerateRequest): Promise<AiGener
     }
 
     const jsonResp = await res.json();
-    const textResponse = jsonResp.choices?.[0]?.message?.content || jsonResp.message?.content || '';
+    const textResponse = jsonResp.choices?.[0]?.message?.content || jsonResp.choices?.[0]?.message?.reasoning_content || jsonResp.message?.content || '';
     const draws = parseAiDraws(parseJsonishArray(textResponse));
     if (draws.length === 0) {
-      throw new Error(`Custom LLM returned no usable draws. Raw response: ${JSON.stringify(jsonResp).slice(0, 500)}`);
+      throw new Error(`Custom LLM returned no usable draws. Message content: ${String(textResponse || JSON.stringify(jsonResp)).slice(0, 800)}`);
     }
 
     return { draws, source: 'custom_llm' };

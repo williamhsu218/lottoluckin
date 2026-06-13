@@ -73,15 +73,31 @@ describe('AI prompt and response helpers', () => {
       combinations: [
         { red: '05 01 03 02 04', blue: '02,01' },
         { '前区': ['10', '09', '08', '07', '06'], '后区': ['12', '11'] },
+        { front_area: [15, 14, 13, 12, 11], back_area: [10, 9] },
       ],
     })).toEqual([
       { front: [1, 2, 3, 4, 5], back: [1, 2] },
       { front: [6, 7, 8, 9, 10], back: [11, 12] },
+      { front: [11, 12, 13, 14, 15], back: [9, 10] },
     ]);
   });
 
   it('accepts a single draw object without a wrapper', () => {
     expect(parseAiDraws({ frontNumbers: [3, 2, 1, 5, 4], backNumbers: [2, 1] })).toEqual([
+      { front: [1, 2, 3, 4, 5], back: [1, 2] },
+    ]);
+  });
+
+  it('recursively extracts draws from chat completion shaped responses', () => {
+    expect(parseAiDraws({
+      choices: [
+        {
+          message: {
+            content: '{"recommendations":[{"redBalls":"05 04 03 02 01","blueBalls":"02 01"}]}',
+          },
+        },
+      ],
+    })).toEqual([
       { front: [1, 2, 3, 4, 5], back: [1, 2] },
     ]);
   });
