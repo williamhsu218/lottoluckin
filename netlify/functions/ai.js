@@ -1,5 +1,3 @@
-import { GoogleGenAI, Type } from '@google/genai';
-
 function buildAiPrompt({ mode, pkg, results }) {
   let prompt = '';
   let systemInstruction = '';
@@ -103,6 +101,7 @@ async function generateAiDraws(input) {
   const geminiKey = process.env.GEMINI_API_KEY?.trim();
   if (!geminiKey) throw new Error('Server AI key is not configured');
 
+  const { GoogleGenAI } = await import('@google/genai');
   const ai = new GoogleGenAI({ apiKey: geminiKey });
   const response = await ai.models.generateContent({
     model: process.env.GEMINI_MODEL_NAME || 'gemini-3.1-pro-preview',
@@ -111,12 +110,12 @@ async function generateAiDraws(input) {
       systemInstruction,
       responseMimeType: 'application/json',
       responseSchema: {
-        type: Type.ARRAY,
+        type: 'ARRAY',
         items: {
-          type: Type.OBJECT,
+          type: 'OBJECT',
           properties: {
-            front: { type: Type.ARRAY, items: { type: Type.NUMBER } },
-            back: { type: Type.ARRAY, items: { type: Type.NUMBER } },
+            front: { type: 'ARRAY', items: { type: 'NUMBER' } },
+            back: { type: 'ARRAY', items: { type: 'NUMBER' } },
           },
           required: ['front', 'back'],
         },
