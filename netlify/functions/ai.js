@@ -46,15 +46,38 @@ function parseJsonishArray(text) {
 }
 
 function parseAiDraws(value) {
-  const items = Array.isArray(value)
-    ? value
-    : (value && typeof value === 'object' && Array.isArray(value.draws) ? value.draws : []);
+  const getItems = (input) => {
+    if (Array.isArray(input)) return input;
+    if (!input || typeof input !== 'object') return [];
 
-  return items
-    .map(item => ({
-      front: Array.isArray(item?.front) ? item.front.map(Number).filter(Number.isFinite).sort((a, b) => a - b) : [],
-      back: Array.isArray(item?.back) ? item.back.map(Number).filter(Number.isFinite).sort((a, b) => a - b) : [],
-    }))
+    for (const key of ['draws', 'numbers', 'results', 'combinations', 'tickets']) {
+      if (Array.isArray(input[key])) return input[key];
+    }
+
+    return input.front || input.red || input.reds || input.frontNumbers || input.frontBalls || input.back || input.blue || input.blues || input.backNumbers || input.backBalls || input['前区'] || input['后区']
+      ? [input]
+      : [];
+  };
+
+  const toNumberList = (input) => {
+    const raw = Array.isArray(input)
+      ? input
+      : typeof input === 'string'
+        ? input.split(/[\s,，、|+]+/)
+        : [];
+
+    return raw
+      .map(Number)
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+  };
+
+  return getItems(value)
+    .map(item => {
+      const front = toNumberList(item?.front ?? item?.red ?? item?.reds ?? item?.frontNumbers ?? item?.frontBalls ?? item?.['前区'] ?? item?.['前区号码']);
+      const back = toNumberList(item?.back ?? item?.blue ?? item?.blues ?? item?.backNumbers ?? item?.backBalls ?? item?.['后区'] ?? item?.['后区号码']);
+      return { front, back };
+    })
     .filter(draw => draw.front.length > 0 && draw.back.length > 0);
 }
 

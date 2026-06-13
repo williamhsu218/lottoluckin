@@ -31,15 +31,39 @@ export function buildAiPrompt({ mode, pkg, results }: AiGenerateRequest) {
 }
 
 export function parseAiDraws(value: unknown): DrawSet[] {
-  const items = Array.isArray(value)
-    ? value
-    : (value && typeof value === 'object' && Array.isArray((value as any).draws) ? (value as any).draws : []);
+  const getItems = (input: unknown): unknown[] => {
+    if (Array.isArray(input)) return input;
+    if (!input || typeof input !== 'object') return [];
 
-  return items
-    .map((item: any) => ({
-      front: Array.isArray(item?.front) ? item.front.map(Number).filter(Number.isFinite).sort((a: number, b: number) => a - b) : [],
-      back: Array.isArray(item?.back) ? item.back.map(Number).filter(Number.isFinite).sort((a: number, b: number) => a - b) : [],
-    }))
+    const record = input as any;
+    for (const key of ['draws', 'numbers', 'results', 'combinations', 'tickets']) {
+      if (Array.isArray(record[key])) return record[key];
+    }
+
+    return record.front || record.red || record.reds || record.frontNumbers || record.frontBalls || record.back || record.blue || record.blues || record.backNumbers || record.backBalls || record['前区'] || record['后区']
+      ? [record]
+      : [];
+  };
+
+  const toNumberList = (input: unknown): number[] => {
+    const raw = Array.isArray(input)
+      ? input
+      : typeof input === 'string'
+        ? input.split(/[\s,，、|+]+/)
+        : [];
+
+    return raw
+      .map(Number)
+      .filter(Number.isFinite)
+      .sort((a: number, b: number) => a - b);
+  };
+
+  return getItems(value)
+    .map((item: any) => {
+      const front = toNumberList(item?.front ?? item?.red ?? item?.reds ?? item?.frontNumbers ?? item?.frontBalls ?? item?.['前区'] ?? item?.['前区号码']);
+      const back = toNumberList(item?.back ?? item?.blue ?? item?.blues ?? item?.backNumbers ?? item?.backBalls ?? item?.['后区'] ?? item?.['后区号码']);
+      return { front, back };
+    })
     .filter(draw => draw.front.length > 0 && draw.back.length > 0);
 }
 

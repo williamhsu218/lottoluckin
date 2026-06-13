@@ -67,4 +67,22 @@ describe('AI prompt and response helpers', () => {
       { front: [1, 2, 3, 4, 5], back: [1, 2] },
     ]);
   });
+
+  it('accepts common LLM field variants and string number lists', () => {
+    expect(parseAiDraws({
+      combinations: [
+        { red: '05 01 03 02 04', blue: '02,01' },
+        { '前区': ['10', '09', '08', '07', '06'], '后区': ['12', '11'] },
+      ],
+    })).toEqual([
+      { front: [1, 2, 3, 4, 5], back: [1, 2] },
+      { front: [6, 7, 8, 9, 10], back: [11, 12] },
+    ]);
+  });
+
+  it('accepts a single draw object without a wrapper', () => {
+    expect(parseAiDraws({ frontNumbers: [3, 2, 1, 5, 4], backNumbers: [2, 1] })).toEqual([
+      { front: [1, 2, 3, 4, 5], back: [1, 2] },
+    ]);
+  });
 });
