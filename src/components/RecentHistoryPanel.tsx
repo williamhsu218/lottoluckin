@@ -42,7 +42,7 @@ const sourceLabels: Record<string, string> = {
 const getMetadata = (rec: HistoryRecord) => {
   try {
     const m = JSON.parse(rec.excluded || '{}');
-    return m as { mode?: string; pkg?: string; source?: string; purchased_at?: string };
+    return m as { mode?: string; pkg?: string; source?: string; source_detail?: string; purchased_at?: string };
   } catch (e) {}
   return null;
 };
@@ -168,6 +168,11 @@ function RecentHistoryItem({
                 : 'bg-amber-500/10 border-amber-500/20 text-amber-600'
             }`}>
               来源: {sourceLabel}
+            </span>
+          )}
+          {meta?.source === 'local_fallback' && meta.source_detail && (
+            <span className="text-[9px] text-amber-600 font-sans truncate max-w-[180px]" title={meta.source_detail}>
+              {meta.source_detail}
             </span>
           )}
         </div>

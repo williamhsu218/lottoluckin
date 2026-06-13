@@ -34,15 +34,18 @@ export async function generateAiDraws(input: AiGenerateRequest): Promise<AiGener
     });
 
     if (!res.ok) {
-      throw new Error(`Custom LLM Error: ${res.status} ${res.statusText}`);
+      const errorText = await res.text().catch(() => '');
+      throw new Error(`Custom LLM Error: ${res.status} ${res.statusText}${errorText ? ` - ${errorText.slice(0, 300)}` : ''}`);
     }
 
     const jsonResp = await res.json();
     const textResponse = jsonResp.choices?.[0]?.message?.content || jsonResp.message?.content || '';
-    return {
-      draws: parseAiDraws(parseJsonishArray(textResponse)),
-      source: 'custom_llm',
-    };
+    const draws = parseAiDraws(parseJsonishArray(textResponse));
+    if (draws.length === 0) {
+      throw new Error(`Custom LLM returned no usable draws. Raw response: ${JSON.stringify(jsonResp).slice(0, 500)}`);
+    }
+
+    return { draws, source: 'custom_llm' };
   }
 
   const geminiKey = process.env.GEMINI_API_KEY?.trim();
@@ -71,8 +74,10 @@ export async function generateAiDraws(input: AiGenerateRequest): Promise<AiGener
     },
   });
 
-  return {
-    draws: parseAiDraws(parseJsonishArray(response.text?.trim() || '[]')),
-    source: 'gemini',
-  };
+  const draws = parseAiDraws(parseJsonishArray(response.text?.trim() || '[]'));
+  if (draws.length === 0) {
+    throw new Error(`Gemini returned no usable draws. Raw response: ${(response.text || '').slice(0, 500)}`);
+  }
+
+  return { draws, source: 'gemini' };
 }

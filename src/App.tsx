@@ -53,6 +53,7 @@ const sourceLabels: Record<GenerationSource, string> = {
 export default function App() {
   const [currentDraws, setCurrentDraws] = useState<DrawSet[]>([]);
   const [currentSource, setCurrentSource] = useState<GenerationSource | null>(null);
+  const [currentSourceDetail, setCurrentSourceDetail] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
   
@@ -557,6 +558,7 @@ export default function App() {
       try {
         let finalDraws: DrawSet[] = [];
         let generationSource: GenerationSource | null = null;
+        let generationSourceDetail: string | null = null;
         const isStats = mode === 'stats' && activeResults.length > 0;
         const isIChing = mode === 'iching';
 
@@ -573,12 +575,17 @@ export default function App() {
               if (Array.isArray(data?.draws)) {
                 finalDraws = data.draws;
                 generationSource = data.source === 'custom_llm' || data.source === 'gemini' ? data.source : 'custom_llm';
+                generationSourceDetail = generationSource === 'custom_llm' ? 'LLM_API_URL' : 'GEMINI_API_KEY';
               }
-            } else if (res.status !== 503) {
+            } else {
               const errStr = await res.text();
-              console.warn('AI generation failed:', errStr);
+              generationSourceDetail = `AI接口返回 ${res.status}: ${errStr.slice(0, 220)}`;
+              if (res.status !== 503) {
+                console.warn('AI generation failed:', errStr);
+              }
             }
           } catch (err) {
+            generationSourceDetail = err instanceof Error ? err.message : String(err);
             console.warn('Server AI generation unavailable, falling back to local generation', err);
           }
         }
@@ -609,13 +616,14 @@ export default function App() {
 
         setCurrentDraws(finalDraws);
         setCurrentSource(generationSource);
+        setCurrentSourceDetail(generationSourceDetail);
         setIsAnimating(false);
 
         const tempId = String(Date.now());
         const record = {
           front: JSON.stringify(finalDraws),
           back: '[]', 
-          excluded: JSON.stringify({ mode: mode, pkg: pkg.name, source: generationSource }),
+          excluded: JSON.stringify({ mode: mode, pkg: pkg.name, source: generationSource, source_detail: generationSourceDetail }),
           purchased: false,
         };
 
@@ -834,11 +842,16 @@ export default function App() {
                            currentSource === 'custom_llm' || currentSource === 'gemini'
                              ? 'text-emerald-600 bg-emerald-500/10 border-emerald-500/20'
                              : 'text-amber-600 bg-amber-500/10 border-amber-500/20'
-                         }`}>
+                         }`} title={currentSourceDetail || undefined}>
                            来源: {sourceLabels[currentSource]}
                          </span>
                        )}
                     </div>
+                    {currentSource === 'local_fallback' && currentSourceDetail && (
+                      <span className="hidden lg:inline-block max-w-[360px] truncate text-[10px] normal-case tracking-normal text-amber-600" title={currentSourceDetail}>
+                        {currentSourceDetail}
+                      </span>
+                    )}
                  </div>
 
                  <div className="flex-1 flex flex-col gap-3 pb-4">
