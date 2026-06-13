@@ -147,12 +147,13 @@ async function generateAiDraws(input) {
         body: JSON.stringify({
           model: modelToUse,
           messages: [
-            { role: 'system', content: systemInstruction + '\n请务必只返回能够被JSON.parse解析的JSON对象格式：{"draws":[{"front":[1,2,3,4,5],"back":[1,2]}]}。不要包含多余文本或 Markdown 代码块标识符。' },
+            { role: 'system', content: systemInstruction + '\nReturn JSON only. 第一字符必须是 {，不要解释、不要分析、不要 Markdown。JSON schema: {"draws":[{"front":[1,2,3,4,5],"back":[1,2]}]}。front 必须 5 个 1-35 的数字，back 必须 2 个 1-12 的数字。' },
             { role: 'user', content: prompt },
           ],
           temperature: 0.3,
           max_tokens: 700,
           stream: false,
+          thinking: { type: 'disabled' },
           response_format: { type: 'json_object' },
         }),
       });
@@ -170,7 +171,7 @@ async function generateAiDraws(input) {
       throw new Error(`Custom LLM Error: ${res.status} ${res.statusText}${errorText ? ` - ${errorText.slice(0, 300)}` : ''}`);
     }
     const jsonResp = await res.json();
-    const textResponse = jsonResp.choices?.[0]?.message?.content || jsonResp.choices?.[0]?.message?.reasoning_content || jsonResp.message?.content || '';
+    const textResponse = jsonResp.choices?.[0]?.message?.content || jsonResp.message?.content || '';
     const draws = parseAiDraws(textResponse);
     if (draws.length === 0) {
       throw new Error(`Custom LLM returned no usable draws. Message content: ${String(textResponse || JSON.stringify(jsonResp)).slice(0, 800)}`);
