@@ -1,7 +1,13 @@
+import 'dotenv/config';
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
-import * as cheerio from 'cheerio';
+import { generateAiDraws } from './src/server/ai-service';
+import lotteryData from './src/server/lottery-data.cjs';
+
+const { fetchLotteryHistory, fetchPrizeInfo } = lotteryData as {
+  fetchLotteryHistory: () => Promise<unknown>;
+  fetchPrizeInfo: (drawNum: string) => Promise<unknown>;
+};
 
 async function startServer() {
   const app = express();
@@ -13,56 +19,11 @@ async function startServer() {
   // API Proxy Route for Sports Lottery
   app.get('/api/lottery/history', async (req, res) => {
     try {
-      // Method 1: Try official Sporttery API first
-      const sportteryRes = await fetch('https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=50&isVerify=1&pageNo=1', {
-          headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-              'Referer': 'https://www.lottery.gov.cn/'
-          }
-      });
-      
-      if (sportteryRes.ok) {
-          const data = await sportteryRes.json();
-          if (data && data.value && data.value.list && data.value.list.length > 0) {
-              res.json(data);
-              return;
-          }
-      }
-    } catch (err) {
-        console.warn("Sporttery API via Express failed, falling back to 500.com", err);
+      res.json(await fetchLotteryHistory());
+    } catch (error: any) {
+      console.warn("Failed to fetch lottery history", error);
+      res.status(500).json({ error: error.message });
     }
-
-    try {
-      // Method 2: Fallback to scraping datachart.500.com (very reliable)
-      const response = await fetch('https://datachart.500.com/dlt/history/newinc/history.php?limit=50', {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-      });
-      
-      const text = await response.text();
-      const $ = cheerio.load(text);
-      const rows = $('#tdata tr').toArray().slice(0, 50).map(el => {
-         const tds = $(el).find('td');
-         if (tds.length === 0) return null;
-         return {
-           lotteryDrawNum: $(tds[0]).text().trim(),
-           lotteryDrawResult: Array.from({length: 7}).map((_, i) => $(tds[i+1]).text().trim()).join(' '),
-           poolBalanceAfterdraw: $(tds[8]).text().trim().replace(/,/g, ''),
-           lotteryDrawTime: $(tds[14]).text().trim()
-         }
-      }).filter(Boolean);
-      
-      if (rows.length > 0) {
-        res.json({ value: { list: rows } });
-        return;
-      }
-    } catch (error) {
-      console.warn("Failed to fetch from 500.com datachart", error);
-    }
-
-    // Return empty array so client can try JSONP and CORS proxies next
-    res.json({ value: { list: [] } });
   });
 
   app.get('/api/lottery/prizeInfo', async (req, res) => {
@@ -70,55 +31,31 @@ async function startServer() {
     if (!drawNum) return res.status(400).json({ error: 'Missing drawNum' });
 
     try {
-      const response = await fetch(`https://kaijiang.500.com/shtml/dlt/${drawNum}.shtml`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Referer': 'https://kaijiang.500.com/'
-        }
-      });
-      if (!response.ok) return res.status(response.status).json({ error: 'Failed to fetch' });
-      
-      const text = await response.text();
-      const $ = cheerio.load(text);
-      
-      let poolAmount = '';
-      const spans = $('span.cfont1, span.cfont2').toArray();
-      // Usually "奖池滚存" is around those spans, or we can just find any text matching "奖池.*元" or "奖池.*亿"
-      const bodyText = $('body').text().replace(/\s+/g, '');
-      const poolMatch = bodyText.match(/奖池滚存[:：]?([0-9.,]+)(元|亿)/);
-      if (poolMatch) {
-         if (poolMatch[2] === '亿') {
-            poolAmount = (parseFloat(poolMatch[1]) * 100000000).toString();
-         } else {
-            poolAmount = poolMatch[1].replace(/,/g, '');
-         }
-      } else {
-         // Try from table
-         const trs = $('table').find('tr').toArray();
-         trs.forEach(r => {
-           const trText = $(r).text().replace(/\s+/g, '');
-           const pMatch = trText.match(/奖池滚存.*?([0-9.,]+)(元|亿)/);
-           if (pMatch) {
-             if (pMatch[2] === '亿') {
-                poolAmount = (parseFloat(pMatch[1]) * 100000000).toString();
-             } else {
-                poolAmount = pMatch[1].replace(/,/g, '');
-             }
-           }
-         });
-      }
-
-      res.json({ drawNum, poolBalanceAfterdraw: poolAmount });
+      res.json(await fetchPrizeInfo(drawNum));
     } catch (err: any) {
       console.warn(`Failed to fetch prize info for ${drawNum}`, err);
-      res.status(500).json({ error: err.message });
+      res.status(err.status || 500).json({ error: err.message });
     }
   });
 
-// ... (removed) ...
+  app.post('/api/ai/generate', async (req, res) => {
+    try {
+      const { mode, pkg, results } = req.body || {};
+      if ((mode !== 'stats' && mode !== 'iching') || !pkg || !Array.isArray(results)) {
+        return res.status(400).json({ error: 'Invalid generation request' });
+      }
+
+      const draws = await generateAiDraws({ mode, pkg, results });
+      res.json({ draws });
+    } catch (err: any) {
+      const status = err.message === 'Server AI key is not configured' ? 503 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true, allowedHosts: true },
       appType: 'spa',

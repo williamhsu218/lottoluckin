@@ -1,45 +1,15 @@
-import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { Dices, X, CheckCircle2, History, Database, Sparkles, BarChart3, Activity, Settings, User, TrendingUp, ChevronDown, Trash2 } from 'lucide-react';
-import { format } from 'date-fns';
-import { createClient } from '@supabase/supabase-js';
-import { BarChart, Bar, LineChart, Line, ComposedChart, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
-import { GoogleGenAI, Type } from "@google/genai";
+import { useState, useEffect, lazy, Suspense } from 'react';
+import { Dices, CheckCircle2, History, Database, Sparkles, BarChart3, Activity, Settings, User, TrendingUp } from 'lucide-react';
+import { createClient, type User as SupabaseUser } from '@supabase/supabase-js';
+import RecentHistoryPanel from './components/RecentHistoryPanel';
+import type { Theme } from './components/SettingsModal';
+import { PACKAGES, formatNumber, type DrawSet, type GenMode, type LottoResult, type PackageDef } from './shared/lottery';
 
-function getCombinations(arr: number[], k: number): number[][] {
-  if (k === 0) return [[]];
-  if (arr.length === 0) return [];
-  if (k === arr.length) return [arr];
-  if (k > arr.length) return [];
-  const head = arr[0];
-  const tailCombs = getCombinations(arr.slice(1), k - 1);
-  const withHead = tailCombs.map(c => [head, ...c]);
-  const withoutHead = getCombinations(arr.slice(1), k);
-  return [...withHead, ...withoutHead];
-}
-
-function expandDraw(draw: DrawSet): DrawSet[] {
-   const fCombs = getCombinations(draw.front, 5);
-   const bCombs = getCombinations(draw.back, 2);
-   const res: DrawSet[] = [];
-   for (const f of fCombs) {
-     for (const b of bCombs) {
-        res.push({ front: f, back: b });
-     }
-   }
-   return res;
-}
-
-const getPrizeLevel = (f: number, b: number): number => {
-  if (f === 5 && b === 2) return 1;
-  if (f === 5 && b === 1) return 2;
-  if ((f === 5 && b === 0) || (f === 4 && b === 2)) return 3;
-  if (f === 4 && b === 1) return 4;
-  if ((f === 3 && b === 2) || (f === 4 && b === 0)) return 5;
-  if ((f === 3 && b === 1) || (f === 2 && b === 2)) return 6;
-  if ((f === 3 && b === 0) || (f === 1 && b === 2) || (f === 2 && b === 1) || (f === 0 && b === 2)) return 7;
-  return 0; // No prize
-};
+const ConfirmDialog = lazy(() => import('./components/ConfirmDialog'));
+const HistoryModal = lazy(() => import('./components/HistoryModal'));
+const NoticeDialog = lazy(() => import('./components/NoticeDialog'));
+const SettingsModal = lazy(() => import('./components/SettingsModal'));
+const TrendModal = lazy(() => import('./components/TrendModal'));
 
 
 
@@ -47,9 +17,6 @@ const getPrizeLevel = (f: number, b: number): number => {
 const localSupaUrl = localStorage.getItem('SUPABASE_URL') || '';
 const localSupaKey = localStorage.getItem('SUPABASE_KEY') || '';
 const localHistoryApiUrl = localStorage.getItem('HISTORY_API_URL') || '';
-const localGeminiKey = localStorage.getItem('GEMINI_API_KEY') || '';
-const localLlmApiUrl = localStorage.getItem('LLM_API_URL') || '';
-const localLlmModelName = localStorage.getItem('LLM_MODEL_NAME') || '';
 
 let supabase: any = null;
 let isAdminInit = false;
@@ -69,31 +36,8 @@ interface HistoryRecord {
   excluded: string; 
   purchased: boolean;
   created_at: string;
+  user_id?: string;
 }
-
-interface LottoResult {
-  lotteryDrawNum: string;
-  lotteryDrawResult: string;
-  lotteryDrawTime: string;
-  poolBalanceAfterdraw?: string;
-}
-
-interface DrawSet { front: number[]; back: number[]; }
-
-type GenMode = 'random' | 'iching' | 'stats';
-type DrawConfig = { f: number; b: number; count: number };
-type PackageDef = { id: string; name: string; price: number; desc: string; configs: DrawConfig[] };
-
-const PACKAGES: PackageDef[] = [
-  { id: 'p_1', name: '单注体验', price: 2, desc: '1注单式，纯粹摸奖', configs: [{ f: 5, b: 2, count: 1 }] },
-  { id: 'p_5', name: '标准满票', price: 10, desc: '单张彩票5注排列', configs: [{ f: 5, b: 2, count: 5 }] },
-  { id: 'p_18', name: '18元套票', price: 18, desc: '6注单式 + 1注(5+3)复式', configs: [{ f: 5, b: 2, count: 6 }, { f: 5, b: 3, count: 1 }] },
-  { id: 'p_28', name: '28元套票', price: 28, desc: '8注单式 + 1注(6+2)复式', configs: [{ f: 5, b: 2, count: 8 }, { f: 6, b: 2, count: 1 }] },
-  { id: 'p_58', name: '58元套票', price: 58, desc: '8注单式 + 1注(7+2)复式', configs: [{ f: 5, b: 2, count: 8 }, { f: 7, b: 2, count: 1 }] },
-  { id: 'p_88', name: '88元套票', price: 88, desc: '5单式+(7+2)复式+(6+3)复式', configs: [{ f: 5, b: 2, count: 5 }, { f: 7, b: 2, count: 1 }, { f: 6, b: 3, count: 1 }] },
-];
-
-type Theme = 'light' | 'dark' | 'system';
 
 export default function App() {
   const [currentDraws, setCurrentDraws] = useState<DrawSet[]>([]);
@@ -108,11 +52,16 @@ export default function App() {
   const [backtestPage, setBacktestPage] = useState(1);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showTrendModal, setShowTrendModal] = useState(false);
+  const [showClearHistoryConfirm, setShowClearHistoryConfirm] = useState(false);
+  const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
   
   const [lotteryResults, setLotteryResults] = useState<LottoResult[]>([]);
   const [isFetchingResults, setIsFetchingResults] = useState(false);
   
   const [isAdmin] = useState<boolean>(isAdminInit);
+  const [supabaseUser, setSupabaseUser] = useState<SupabaseUser | null>(null);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
   const [supabaseError, setSupabaseError] = useState<string | null>(null);
   
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Set<string>>(new Set());
@@ -160,9 +109,54 @@ export default function App() {
   const [setupUrl, setSetupUrl] = useState(localSupaUrl);
   const [setupKey, setSetupKey] = useState(localSupaKey);
   const [historyApiUrl, setHistoryApiUrl] = useState(localHistoryApiUrl);
-  const [geminiApiKey, setGeminiApiKey] = useState(localGeminiKey);
-  const [llmApiUrl, setLlmApiUrl] = useState(localLlmApiUrl);
-  const [llmModelName, setLlmModelName] = useState(localLlmModelName);
+  const isCloudReady = Boolean(isAdmin && supabase && supabaseUser);
+
+  useEffect(() => {
+    if (!isAdmin || !supabase) return;
+
+    supabase.auth.getSession().then(({ data }: any) => {
+      setSupabaseUser(data.session?.user ?? null);
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_event: string, session: any) => {
+      setSupabaseUser(session?.user ?? null);
+    });
+
+    return () => data.subscription.unsubscribe();
+  }, [isAdmin]);
+
+  const signInWithPassword = async () => {
+    if (!supabase) {
+      setNoticeMessage('请先保存 Supabase URL 和 anon key 配置。');
+      return;
+    }
+
+    const email = authEmail.trim();
+    if (!email || !authPassword) {
+      setNoticeMessage('请输入云端账号的邮箱和密码。');
+      return;
+    }
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password: authPassword,
+    });
+
+    if (error) {
+      setNoticeMessage('登录失败：' + error.message);
+      return;
+    }
+
+    setAuthPassword('');
+    setNoticeMessage('云端账号已登录。');
+  };
+
+  const signOut = async () => {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    setSupabaseUser(null);
+    fetchHistory(1, false);
+  };
 
   const fetchOfficialHistory = async () => {
     let loadedFromCloud = false;
@@ -196,7 +190,7 @@ export default function App() {
   useEffect(() => {
     fetchHistory();
     fetchOfficialHistory();
-  }, [supabase, isAdmin]);
+  }, [supabase, isAdmin, supabaseUser?.id]);
 
   // Fetch missing prizeInfo for purchased records
   useEffect(() => {
@@ -258,7 +252,7 @@ export default function App() {
 
   const fetchHistory = async (page = 1, append = false) => {
     setIsFetchingHistory(true);
-    if (isAdmin && supabase) {
+    if (isCloudReady && supabase) {
       try {
         const from = (page - 1) * HISTORY_PAGE_SIZE;
         const to = from + HISTORY_PAGE_SIZE - 1;
@@ -408,13 +402,6 @@ export default function App() {
     if (resultsList.length > 0) {
        setLotteryResults(resultsList);
        localStorage.setItem('official_lottery_results', JSON.stringify(resultsList));
-       if (isAdmin && supabase) {
-          try {
-             await supabase.from('official_draws').upsert(resultsList, { onConflict: 'lotteryDrawNum' });
-          } catch(e) {
-             console.warn("Could not sync official history to cloud", e);
-          }
-       }
     }
     
     setIsFetchingResults(false);
@@ -439,7 +426,7 @@ export default function App() {
     });
     setHistory(newHistory);
     
-    if (isAdmin && supabase) {
+    if (isCloudReady && supabase) {
       try {
         const itemToUpdate = newHistory.find(h => h.id === id);
         const { error } = await supabase.from('draw_history').update({ 
@@ -465,7 +452,7 @@ export default function App() {
     const newHistory = history.filter(h => h.id !== id);
     setHistory(newHistory);
     
-    if (isAdmin && supabase) {
+    if (isCloudReady && supabase) {
       try {
         const { error } = await supabase.from('draw_history').delete().eq('id', id);
         if (error) {
@@ -561,110 +548,25 @@ export default function App() {
         const isIChing = mode === 'iching';
 
         if (isStats || isIChing) {
-            let prompt = "";
-            let systemInstruction = "";
+          try {
+            const res = await fetch('/api/ai/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ mode, pkg, results: activeResults }),
+            });
 
-            if (isStats) {
-                const historySummary = activeResults.slice(0, 30).map(r => `期号:${r.lotteryDrawNum} 红球:${r.lotteryDrawResult.substring(0,14)} 蓝球:${r.lotteryDrawResult.substring(15)}`).join('\n');
-                systemInstruction = "作为中国体彩超级大乐透资深走势分析专家，请根据近期历史开奖数据，利用冷热遗漏、连号、重号、奇偶比、区间分布等专业走势分析手法，精挑细选出一组最高概率的号码。返回严格的数组对象 JSON。不允许重复。";
-                prompt = `下面是近期的开奖历史：\n${historySummary}\n\n请按照不同的复式或单式规则，帮我生成如下要求的号码注数：\n`;
-                pkg.configs.forEach(c => {
-                   prompt += `- 生成 ${c.count} 注号码组合，每注组合挑选出 ${c.f} 个红球(1-35范围) 和 ${c.b} 个蓝球(1-12范围)。\n`;
-                });
-            } else {
-                systemInstruction = "作为一位精通《易经》理数与先天八卦阵列的大师，请结合当前时辰的八字干支，通过太极生两仪、两仪生四象的推演规律，推测出超级大乐透的吉数。返回严格的数组对象 JSON。不允许重复。";
-                prompt = `当前时间时间戳：${Date.now()}\n请根据易经理数，推演生成如下要求的号码注数：\n`;
-                pkg.configs.forEach(c => {
-                   prompt += `- 生成 ${c.count} 注推演号码组合，每一注要求 ${c.f} 个红球(1-35) 和 ${c.b} 个蓝球(1-12)。\n`;
-                });
-            }
-
-            let aiKey = geminiApiKey;
-            if (aiKey) aiKey = aiKey.trim();
-            if (!aiKey) aiKey = process.env.GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY;
-
-            let dataToParse: any = null;
-
-            if (llmApiUrl && llmApiUrl.trim()) {
-               const customUrl = llmApiUrl.trim();
-               const isChatCompletion = customUrl.endsWith('/chat/completions') || customUrl.includes('/v1/messages');
-               const finalUrl = isChatCompletion ? customUrl : customUrl.replace(/\/$/, '') + '/chat/completions';
-               
-               const modelToUse = llmModelName?.trim() || 'gpt-3.5-turbo';
-               
-               const res = await fetch(finalUrl, {
-                 method: 'POST',
-                 headers: {
-                   'Content-Type': 'application/json',
-                   'Authorization': `Bearer ${aiKey}`
-                 },
-                 body: JSON.stringify({
-                   model: modelToUse,
-                   messages: [
-                     { role: 'system', content: systemInstruction + "\n请务必只返回能够被JSON.parse解析的JSON数组格式（[{front:[], back:[]}]），不要包含多余文本或 Markdown 代码块标识符。" },
-                     { role: 'user', content: prompt }
-                   ],
-                   temperature: 0.7
-                 })
-               });
-
-               if (!res.ok) {
-                 const errStr = await res.text();
-                 console.warn("Custom LLM API Error: ", errStr);
-                 throw new Error(`Custom LLM Error: ${res.status} ${res.statusText}`);
-               }
-               const jsonResp = await res.json();
-               let textResponse = jsonResp.choices?.[0]?.message?.content || jsonResp.message?.content || "";
-               
-               let jsonStr = textResponse.trim();
-               if (jsonStr.startsWith("```json")) {
-                  jsonStr = jsonStr.replace(/^```json/, "").replace(/```$/, "").trim();
-               } else if (jsonStr.startsWith("```")) {
-                  jsonStr = jsonStr.replace(/^```/, "").replace(/```$/, "").trim();
-               }
-               dataToParse = JSON.parse(jsonStr || "[]");
-            } else if (aiKey) {
-              const ai = new GoogleGenAI({ apiKey: aiKey });
-              const response = await ai.models.generateContent({
-                model: "gemini-3.1-pro-preview",
-                contents: prompt,
-                config: {
-                  systemInstruction,
-                  responseMimeType: "application/json",
-                  responseSchema: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        front: { type: Type.ARRAY, items: { type: Type.NUMBER } },
-                        back: { type: Type.ARRAY, items: { type: Type.NUMBER } }
-                      },
-                      required: ["front", "back"]
-                    }
-                  }
-                }
-              });
-
-              let jsonStr = response.text?.trim() || "[]";
-              if (jsonStr.startsWith("```json")) {
-                 jsonStr = jsonStr.replace(/^```json/, "").replace(/```$/, "").trim();
-              } else if (jsonStr.startsWith("```")) {
-                 jsonStr = jsonStr.replace(/^```/, "").replace(/```$/, "").trim();
+            if (res.ok) {
+              const data = await res.json();
+              if (Array.isArray(data?.draws)) {
+                finalDraws = data.draws;
               }
-
-              dataToParse = JSON.parse(jsonStr);
-            } else {
-               alert("未检测到可用的 API Key。请在设置中配置你的 API Key。");
+            } else if (res.status !== 503) {
+              const errStr = await res.text();
+              console.warn('AI generation failed:', errStr);
             }
-
-            if (dataToParse && Array.isArray(dataToParse) && dataToParse.length > 0) {
-               dataToParse.forEach((d: any) => {
-                  finalDraws.push({
-                     front: d.front.map(Number).sort((a:number,b:number)=>a-b),
-                     back: d.back.map(Number).sort((a:number,b:number)=>a-b)
-                  });
-               });
-            }
+          } catch (err) {
+            console.warn('Server AI generation unavailable, falling back to local generation', err);
+          }
         }
 
         if (finalDraws.length === 0) {
@@ -703,9 +605,12 @@ export default function App() {
         const updated = [newLocalRecord as HistoryRecord, ...history].slice(0, 50);
         setHistory(updated);
 
-        if (isAdmin && supabase) {
+        if (isCloudReady && supabase && supabaseUser) {
           try {
-            const { data, error } = await supabase.from('draw_history').insert(record).select('*').single();
+            const { data, error } = await supabase.from('draw_history').insert({
+              ...record,
+              user_id: supabaseUser.id,
+            }).select('*').single();
             if (!error && data) {
                setHistory(prev => prev.map(h => h.id === tempId ? data : h));
             } else if (error) {
@@ -719,7 +624,7 @@ export default function App() {
         }
       } catch (err: any) {
          setIsAnimating(false);
-         alert("大模型推算过程发生了异常：" + err.message);
+         setNoticeMessage("大模型推算过程发生了异常：" + err.message);
       }
     }, 500); 
   };
@@ -728,180 +633,17 @@ export default function App() {
     localStorage.setItem('SUPABASE_URL', setupUrl);
     localStorage.setItem('SUPABASE_KEY', setupKey);
     localStorage.setItem('HISTORY_API_URL', historyApiUrl);
-    localStorage.setItem('GEMINI_API_KEY', geminiApiKey);
-    localStorage.setItem('LLM_API_URL', llmApiUrl);
-    localStorage.setItem('LLM_MODEL_NAME', llmModelName);
     localStorage.setItem('theme', theme);
     window.location.reload();
   };
 
+  const requestClearGuestHistory = () => setShowClearHistoryConfirm(true);
+
   const clearGuestHistory = () => {
-    if(confirm("Confirm to delete guest history?")) {
-       localStorage.removeItem('lotto_history_v2');
-       setHistory([]);
-    }
+    localStorage.removeItem('lotto_history_v2');
+    setHistory([]);
+    setShowClearHistoryConfirm(false);
   }
-
-  const formatNumber = (num: number) => num.toString().padStart(2, '0');
-
-  const parseHistoryRecord = (rec: HistoryRecord): DrawSet[] => {
-    try {
-      const parsed = JSON.parse(rec.front);
-      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].front) return parsed;
-    } catch(e) {}
-    return [];
-  };
-
-  const getMetadata = (rec: HistoryRecord) => {
-    try {
-       const m = JSON.parse(rec.excluded || '{}');
-       return m as { mode?: number; pkg?: string; purchased_at?: string };
-    }catch(e){}
-    return null;
-  };
-
-const getDynamicPrizeStr = (pLevel: number, poolBalanceAfterdraw: string | undefined) => {
-   const poolAmount = poolBalanceAfterdraw ? parseInt(poolBalanceAfterdraw.replace(/,/g, ''), 10) : 0;
-   const isHighPool = poolAmount >= 800000000;
-   
-   if (pLevel === 1) return "浮动(约1000万)";
-   if (pLevel === 2) return "浮动(约20万)";
-   if (pLevel === 3) return isHighPool ? "6,666元" : "5,000元";
-   if (pLevel === 4) return isHighPool ? "380元" : "300元";
-   if (pLevel === 5) return isHighPool ? "200元" : "150元";
-   if (pLevel === 6) return isHighPool ? "18元" : "15元";
-   if (pLevel === 7) return isHighPool ? "7元" : "5元";
-   return "-";
-};
-
-const getDynamicPrizeNum = (pLevel: number, poolBalanceAfterdraw: string | undefined) => {
-   const poolAmount = poolBalanceAfterdraw ? parseInt(poolBalanceAfterdraw.replace(/,/g, ''), 10) : 0;
-   const isHighPool = poolAmount >= 800000000;
-   
-   if (pLevel === 1) return 10000000;
-   if (pLevel === 2) return 200000;
-   if (pLevel === 3) return isHighPool ? 6666 : 5000;
-   if (pLevel === 4) return isHighPool ? 380 : 300;
-   if (pLevel === 5) return isHighPool ? 200 : 150;
-   if (pLevel === 6) return isHighPool ? 18 : 15;
-   if (pLevel === 7) return isHighPool ? 7 : 5;
-   return 0;
-};
-
-  const checkHits = (historyRec: HistoryRecord, results: LottoResult[]) => {
-    if (results.length === 0) return null;
-    
-    // Find the correct draw result based on purchase time
-    let meta: any = {};
-    try { meta = JSON.parse(historyRec.excluded || '{}'); } catch(e){}
-    const purchaseDate = new Date(meta.purchased_at || historyRec.created_at);
-    
-    // 过了当晚9点（21:00）购买匹配至下一天的开奖
-    let drawDate = new Date(purchaseDate);
-    if (purchaseDate.getHours() >= 21) {
-      drawDate.setDate(drawDate.getDate() + 1);
-    }
-    
-    // Convert to YYYY-MM-DD
-    const yyyy = drawDate.getFullYear();
-    const mm = String(drawDate.getMonth() + 1).padStart(2, '0');
-    const dd = String(drawDate.getDate()).padStart(2, '0');
-    const pDateStr = `${yyyy}-${mm}-${dd}`;
-
-    // results are ordered descending, so reversing them lets us search from oldest to newest
-    const sortedResults = [...results].reverse();
-    let targetResult = sortedResults.find(r => r.lotteryDrawTime >= pDateStr);
-    
-    if (!targetResult) {
-      return { isWaiting: true }; // No result available yet for this ticket
-    }
-
-    const targetIdx = results.findIndex(r => r.lotteryDrawNum === targetResult!.lotteryDrawNum);
-    const previousResult = results[targetIdx + 1];
-    const effectivePoolBalance = previousResult ? previousResult.poolBalanceAfterdraw : targetResult.poolBalanceAfterdraw;
-
-    const draws = parseHistoryRecord(historyRec);
-    if(draws.length === 0) return null;
-
-    const parts = targetResult.lotteryDrawResult.split(' ');
-    const resFront = parts.slice(0, 5).map(n => parseInt(n, 10));
-    const resBack = parts.slice(5, 7).map(n => parseInt(n, 10));
-
-    const winningLines: any[] = [];
-    let bestNoPrizeInfo: any = null;
-    let bestNoPrizeScore = -1;
-    let bestNoPrizeComboNum = 0;
-    let overallLines = 0;
-
-    draws.forEach((draw, dIdx) => {
-      const expanded = expandDraw(draw);
-      overallLines += expanded.length;
-      
-      const isMultiplex = expanded.length > 1;
-      let lineTotalPrizeNum = 0;
-      const hitCounts: Record<number, number> = {};
-      let highestPrize = 99;
-      let lineHitScore = 0;
-
-      const winningSubTickets: any[] = [];
-
-      expanded.forEach((cmb, cIdx) => {
-         const fHits = cmb.front.filter(n => resFront.includes(n));
-         const bHits = cmb.back.filter(n => resBack.includes(n));
-         const pLevel = getPrizeLevel(fHits.length, bHits.length);
-         const score = (fHits.length * 2) + bHits.length;
-         
-         if (score > lineHitScore) lineHitScore = score;
-
-         if (pLevel > 0) {
-             hitCounts[pLevel] = (hitCounts[pLevel] || 0) + 1;
-             lineTotalPrizeNum += getDynamicPrizeNum(pLevel, effectivePoolBalance);
-             if (pLevel < highestPrize) highestPrize = pLevel;
-             winningSubTickets.push({
-                subId: cIdx + 1,
-                pLevel,
-                amount: getDynamicPrizeStr(pLevel, effectivePoolBalance),
-                fHits,
-                bHits,
-                frontStr: cmb.front.map(n => formatNumber(n)).join(' '),
-                backStr: cmb.back.map(n => formatNumber(n)).join(' ')
-             });
-         }
-      });
-
-      if (Object.keys(hitCounts).length > 0) {
-         winningLines.push({
-            lineNum: dIdx + 1,
-            isMultiplex,
-            frontStr: draw.front.map(n => formatNumber(n)).join(' '),
-            backStr: draw.back.map(n => formatNumber(n)).join(' '),
-            hitCounts,
-            highestPrize,
-            totalPrizeNum: lineTotalPrizeNum,
-            hasFloating: hitCounts[1] || hitCounts[2],
-            fHits: draw.front.filter(n => resFront.includes(n)),
-            bHits: draw.back.filter(n => resBack.includes(n)),
-            winningSubTickets
-         });
-      } else if (winningLines.length === 0 && lineHitScore > bestNoPrizeScore) {
-         bestNoPrizeScore = lineHitScore;
-         bestNoPrizeInfo = {
-            fHits: draw.front.filter(n => resFront.includes(n)),
-            bHits: draw.back.filter(n => resBack.includes(n))
-         };
-         bestNoPrizeComboNum = dIdx + 1;
-      }
-    });
-
-    return { 
-      drawNum: targetResult.lotteryDrawNum, 
-      drawTime: targetResult.lotteryDrawTime,
-      winningLines: winningLines.sort((a,b) => a.highestPrize - b.highestPrize),
-      bestNoPrizeInfo: winningLines.length === 0 ? bestNoPrizeInfo : null,
-      bestNoPrizeComboNum,
-      totalLines: overallLines 
-    };
-  };
 
   const trendData = (() => {
     const fCounts = getFrequency(35, 'front');
@@ -933,13 +675,15 @@ const getDynamicPrizeNum = (pLevel: number, poolBalanceAfterdraw: string | undef
           </div>
           <div className="flex flex-col items-end gap-3 z-10">
              <div className="flex items-center gap-2">
-                {isAdmin ? (
-                   <span className="text-xs text-green-600 bg-green-500/10 px-2 py-1 rounded border border-green-500/20 flex items-center gap-1"><Database className="w-3 h-3"/> 管理员模式</span>
+                {isCloudReady ? (
+                   <span className="text-xs text-green-600 bg-green-500/10 px-2 py-1 rounded border border-green-500/20 flex items-center gap-1"><Database className="w-3 h-3"/> 云端同步</span>
+                ) : isAdmin ? (
+                   <span className="text-xs text-blue-600 bg-blue-500/10 px-2 py-1 rounded border border-blue-500/20 flex items-center gap-1"><Database className="w-3 h-3"/> 待登录</span>
                 ) : (
                    <span className="text-xs text-amber-600 bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20 flex items-center gap-1"><User className="w-3 h-3"/> 游客模式</span>
                 )}
                 
-                <button onClick={() => setShowSettingsModal(true)} className="p-2 border border-[var(--border-card)] rounded-full hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors bg-[var(--bg-card)]">
+                <button aria-label="打开系统配置" onClick={() => setShowSettingsModal(true)} className="p-2 border border-[var(--border-card)] rounded-full hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors bg-[var(--bg-card)]">
                   <Settings className="w-4 h-4" />
                 </button>
              </div>
@@ -1047,17 +791,15 @@ const getDynamicPrizeNum = (pLevel: number, poolBalanceAfterdraw: string | undef
                     </div>
 
                     <div className="md:w-[280px] flex flex-col justify-end">
-                      <motion.button 
-                         whileHover={isAnimating ? {} : { scale: 0.98 }}
-                         whileTap={isAnimating ? {} : { scale: 0.96 }}
+                      <button
                          onClick={generateLotto}
-                         className={`w-full py-5 md:h-[88px] bg-gradient-to-tr from-red-600 to-red-500 rounded-2xl relative overflow-hidden flex items-center justify-center transition-all ${isAnimating ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer shadow-lg shadow-red-500/30'}`}
+                         className={`w-full py-5 md:h-[88px] bg-gradient-to-tr from-red-600 to-red-500 rounded-2xl relative overflow-hidden flex items-center justify-center transition-all ${isAnimating ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer shadow-lg shadow-red-500/30 hover:scale-[0.98] active:scale-[0.96]'}`}
                        >
                          <Dices className={`w-8 h-8 mr-3 text-white ${isAnimating ? 'animate-spin' : ''}`} />
                          <span className="text-xl font-bold text-white tracking-widest drop-shadow-md">
                            {isAnimating ? '推演阵列中...' : '生成幸运号码'}
                          </span>
-                      </motion.button>
+                      </button>
                     </div>
                  </div>
                  </div>
@@ -1076,12 +818,9 @@ const getDynamicPrizeNum = (pLevel: number, poolBalanceAfterdraw: string | undef
                     {currentDraws.length > 0 ? (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {currentDraws.map((draw, i) => (
-                        <motion.div 
-                          initial={{ opacity: 0, scale: 0.95 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          transition={{ delay: (i % 10) * 0.03 }}
+                        <div
                           key={`draw-${i}`}
-                          className="flex items-center gap-2 p-3 rounded-xl bg-[var(--bg-input)] border border-[var(--border-card)] hover:border-[var(--text-muted)] w-full overflow-hidden transition-colors"
+                          className="flex items-center gap-2 p-3 rounded-xl bg-[var(--bg-input)] border border-[var(--border-card)] hover:border-[var(--text-muted)] w-full overflow-hidden transition-colors animate-fade-in"
                         >
                           <div className="w-5 h-5 rounded bg-[var(--bg-hover)] flex items-center justify-center text-[9px] text-[var(--text-disabled)] font-mono shrink-0">
                              {formatNumber(i+1)}
@@ -1099,7 +838,7 @@ const getDynamicPrizeNum = (pLevel: number, poolBalanceAfterdraw: string | undef
                                </div>
                              ))}
                           </div>
-                        </motion.div>
+                        </div>
                        ))}
                       </div>
                     ) : (
@@ -1119,620 +858,96 @@ const getDynamicPrizeNum = (pLevel: number, poolBalanceAfterdraw: string | undef
               </div>
            </div>
 
-           {/* Right Column: History */}
-           <div className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-[24px] p-6 flex flex-col relative overflow-hidden h-[600px] lg:h-auto transition-colors duration-300">
-              <div className="text-[11px] uppercase tracking-[1px] text-[var(--text-disabled)] mb-4 font-semibold flex justify-between items-center">
-                <span>最近记录 (Recent)</span>
-                <div className="flex gap-2">
-                   {!isAdmin && history.length > 0 && (
-                      <button onClick={clearGuestHistory} className="text-red-500 hover:text-red-600 bg-red-50 dark:bg-red-500/10 px-2 py-0.5 rounded text-[10px]">清空</button>
-                   )}
-                   <button onClick={() => setShowHistoryModal(true)} className="text-blue-500 hover:text-blue-600 hover:underline px-2 py-0.5 rounded text-[10px]">更 多</button>
-                </div>
-              </div>
-
-              {isAdmin && supabaseError ? (
-                <div className="text-left p-4 bg-red-500/10 rounded-xl border border-red-500/20 mb-4 flex flex-col gap-2">
-                  <p className="text-xs text-red-500 font-bold mb-1 flex items-center gap-1">
-                    <Database className="w-3 h-3"/> 数据库同步异常
-                  </p>
-                  <pre className="text-[10px] text-red-400 bg-red-500/5 p-2 rounded whitespace-pre-wrap word-break">{supabaseError}</pre>
-                  <div className="text-[10px] text-[var(--text-disabled)] mt-1 space-y-1">
-                    <p>如果是因为表不存在，请在 Supabase SQL Editor 中执行：</p>
-                    <pre className="p-2 bg-[var(--bg-input)] rounded border border-[var(--border-card)] font-mono text-blue-400 select-all overflow-x-auto">
-{`CREATE TABLE draw_history (
-  id uuid default gen_random_uuid() primary key,
-  front text,
-  back text,
-  excluded text,
-  purchased boolean default false,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null
-);`}
-                    </pre>
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="flex-1 overflow-y-auto pr-1 space-y-0 scrollbar-thin scrollbar-thumb-[var(--scrollbar-thumb)] flex flex-col">
-                {history.slice(0, 10).map((item) => {
-                  const draws = parseHistoryRecord(item);
-                  if (draws.length === 0) return null;
-                  const mainDraw = draws[0];
-                  const meta = getMetadata(item);
-                  const genMethod = meta?.mode || '未知';
-                  const methodLabels: Record<string, string> = {
-                    'random': '随机漫步',
-                    'iching': '易经理数',
-                    'stats': '走势分析'
-                  };
-                  const methodLabel = methodLabels[genMethod] || genMethod;
-                  
-                  return (
-                  <div key={item.id} className="flex flex-col p-3 border border-transparent border-b-[var(--border-card)] hover:bg-[var(--bg-hover)] transition-colors group relative cursor-pointer rounded-lg" onClick={(e) => toggleExpand(item.id, e)}>
-                    <div className="font-mono text-[12px] flex flex-col gap-1.5 mb-2 relative pr-12">
-                      <div className={`flex gap-1 transition-opacity flex-wrap items-center ${item.purchased ? 'opacity-100' : 'opacity-60 group-hover:opacity-100'}`}>
-                        {mainDraw.front.map((n, i) => <span key={`fh-${i}`} className="text-red-500 dark:text-red-400 font-bold">{formatNumber(n)}</span>)}
-                        <span className="text-[var(--text-muted)] mx-0.5">+</span>
-                        {mainDraw.back.map((n, i) => <span key={`bh-${i}`} className="text-blue-500 dark:text-blue-400 font-bold">{formatNumber(n)}</span>)}
-                        <span className="ml-2 text-[9px] bg-[var(--bg-card)] border border-[var(--border-card)] text-[var(--text-muted)] px-1.5 py-0.5 rounded-md font-sans">
-                           模式: {methodLabel}
-                        </span>
-                      </div>
-
-                      {expandedHistoryIds.has(item.id) && draws.length > 1 && (
-                        <div className="flex flex-col gap-1.5 mt-1 border-t border-[var(--border-card)] pt-2 animate-fade-in">
-                           {draws.slice(1).map((d, didx) => (
-                              <div key={didx} className={`flex gap-1 transition-opacity flex-wrap ${item.purchased ? 'opacity-100' : 'opacity-60 group-hover:opacity-100'}`}>
-                                {d.front.map((n, i) => <span key={`fhd-${i}`} className="text-red-500/80 dark:text-red-400/80 font-bold">{formatNumber(n)}</span>)}
-                                <span className="text-[var(--text-muted)] mx-0.5">+</span>
-                                {d.back.map((n, i) => <span key={`bhd-${i}`} className="text-blue-500/80 dark:text-blue-400/80 font-bold">{formatNumber(n)}</span>)}
-                              </div>
-                           ))}
-                        </div>
-                      )}
-                      
-                      <div className="absolute right-0 top-0 transition-all flex items-center justify-center gap-1 z-10">
-                        <button 
-                          className="p-1 rounded-full text-[var(--text-muted)] opacity-100 lg:opacity-0 lg:group-hover:opacity-100 hover:text-red-500 hover:scale-110 transition-all" 
-                          onClick={(e) => { e.stopPropagation(); deleteRecord(item.id); }}
-                        >
-                           <Trash2 className="w-4 h-4" />
-                        </button>
-                        <button 
-                          className={`p-1 rounded-full ${item.purchased ? 'text-green-500 scale-100 opacity-100' : 'text-[var(--text-muted)] scale-90 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 hover:text-green-500 hover:scale-110'} transition-all`} 
-                          onClick={(e) => { e.stopPropagation(); togglePurchased(item.id, item.purchased); }}
-                        >
-                           <CheckCircle2 className="w-5 h-5" />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex justify-between items-center text-[10px] text-[var(--text-disabled)]">
-                      <span>{format(new Date(item.created_at), 'MM-dd HH:mm')}</span>
-                      <div className="flex gap-2 items-center">
-                        {meta?.pkg && <span className="bg-[var(--bg-input)] border border-[var(--border-card)] text-[var(--text-muted)] px-1.5 py-0.5 rounded">{meta.pkg}</span>}
-                        {draws.length > 1 && <span className="text-[var(--text-muted)] px-1 mt-0.5 flex items-center gap-1">等 {draws.length} 组 <ChevronDown className={`w-3 h-3 transition-transform ${expandedHistoryIds.has(item.id) ? 'rotate-180' : ''}`} /></span>}
-                        {item.purchased && <span className="text-green-600 font-bold mt-0.5">已实购</span>}
-                      </div>
-                    </div>
-                  </div>
-                )})}
-                {history.length === 0 && <div className="text-[var(--text-disabled)] text-sm text-center mt-8 px-4 leading-relaxed">暂无记录<br/>点击记录右上方的对勾将其标记为【已购】即可参与回测</div>}
-              </div>
-           </div>
+           <RecentHistoryPanel
+             history={history}
+             isAdmin={isCloudReady}
+             supabaseError={supabaseError}
+             expandedHistoryIds={expandedHistoryIds}
+             onClearHistory={requestClearGuestHistory}
+             onOpenHistory={() => setShowHistoryModal(true)}
+             onToggleExpand={toggleExpand}
+             onDeleteRecord={deleteRecord}
+             onTogglePurchased={togglePurchased}
+           />
         </div>
       </div>
 
-      <AnimatePresence>
-        {/* Settings Modal */}
-        {showSettingsModal && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-[var(--bg-modal)] backdrop-blur-sm z-50 flex items-center justify-center p-4 lg:p-0"
-            onClick={() => setShowSettingsModal(false)}
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-[24px] p-6 lg:p-8 max-w-[500px] w-full shadow-2xl relative max-h-[90vh] overflow-y-auto custom-scrollbar"
-              onClick={e => e.stopPropagation()}
-            >
-              <button onClick={() => setShowSettingsModal(false)} className="absolute top-6 right-6 text-[var(--text-disabled)] hover:text-[var(--text-main)] transition-colors"><X className="w-5 h-5" /></button>
-              
-              <h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-[var(--text-main)]">
-                <Settings className="w-5 h-5" /> 系统配置中心
-              </h2>
+      <Suspense fallback={null}>
+          {showSettingsModal && (
+            <SettingsModal
+              isAdmin={isAdmin}
+              theme={theme}
+              setupUrl={setupUrl}
+              setupKey={setupKey}
+              historyApiUrl={historyApiUrl}
+              authEmail={authEmail}
+              authPassword={authPassword}
+              signedInEmail={supabaseUser?.email ?? ''}
+              onThemeChange={setTheme}
+              onSetupUrlChange={setSetupUrl}
+              onSetupKeyChange={setSetupKey}
+              onHistoryApiUrlChange={setHistoryApiUrl}
+              onAuthEmailChange={setAuthEmail}
+              onAuthPasswordChange={setAuthPassword}
+              onSignIn={signInWithPassword}
+              onSignOut={signOut}
+              onClearHistory={requestClearGuestHistory}
+              onClose={() => setShowSettingsModal(false)}
+              onSave={saveSettings}
+            />
+          )}
 
-              <div className="space-y-6">
-                 {/* Theme Controls */}
-                 <div>
-                    <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3">主题偏好</div>
-                    <div className="flex bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl p-1.5 gap-1">
-                       <button onClick={() => setTheme('light')} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${theme === 'light' ? 'bg-[var(--bg-card)] text-slate-800 shadow-sm border border-[var(--border-card)]' : 'text-[var(--text-disabled)] hover:text-[var(--text-main)]'}`}>浅色模式</button>
-                       <button onClick={() => setTheme('dark')} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${theme === 'dark' ? 'bg-[var(--bg-hover)] text-white shadow-sm border border-[var(--border-card)]' : 'text-[var(--text-disabled)] hover:text-[var(--text-main)]'}`}>深色模式</button>
-                       <button onClick={() => setTheme('system')} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${theme === 'system' ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm border border-[var(--border-card)]' : 'text-[var(--text-disabled)] hover:text-[var(--text-main)]'}`}>跟随系统</button>
-                    </div>
-                 </div>
+          {showClearHistoryConfirm && (
+            <ConfirmDialog
+              title="清空本地历史"
+              message="这会删除当前浏览器里的游客模式生成记录。云端 Supabase 记录不会受影响。"
+              confirmLabel="清空"
+              onConfirm={clearGuestHistory}
+              onCancel={() => setShowClearHistoryConfirm(false)}
+            />
+          )}
 
-                 {/* Supabase Controls */}
-                 <div>
-                    <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3 flex items-center gap-2">
-                       外部数据库引擎配置 (Supabase)
-                       {isAdmin ? (
-                          <span className="text-[10px] bg-green-500/10 text-green-600 px-2 py-0.5 rounded ml-auto">已激活</span>
-                       ) : (
-                          <span className="text-[10px] bg-amber-500/10 text-amber-600 px-2 py-0.5 rounded ml-auto">未激活 (游客模式)</span>
-                       )}
-                    </div>
-                    <div className="space-y-4">
-                       <div className="flex flex-col gap-1.5">
-                          <label className="text-xs text-[var(--text-disabled)]">VITE_SUPABASE_URL</label>
-                          <input 
-                             type="text" 
-                             value={setupUrl} 
-                             onChange={(e) => setSetupUrl(e.target.value)} 
-                             className="w-full bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl px-4 py-2 text-sm text-[var(--text-main)] outline-none focus:border-green-500 transition-colors"
-                             placeholder="https://xxx.supabase.co"
-                          />
-                       </div>
-                       <div className="flex flex-col gap-1.5">
-                          <label className="text-xs text-[var(--text-disabled)]">VITE_SUPABASE_ANON_KEY</label>
-                          <input 
-                             type="password" 
-                             value={setupKey} 
-                             onChange={(e) => setSetupKey(e.target.value)} 
-                             className="w-full bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl px-4 py-2 text-sm text-[var(--text-main)] outline-none focus:border-green-500 transition-colors"
-                             placeholder="eyJh..."
-                          />
-                       </div>
-                       <p className="text-[10px] text-[var(--text-disabled)] leading-relaxed bg-[var(--bg-hover)] p-3 rounded-lg border border-[var(--border-card)]">
-                         当且仅当填入以上配置后，系统方能保存数据至云端开启跨设备管理能力。配置信息仅保存在当前浏览器的 localStorage 中。留空则降级为游客模式使用本地存储。
-                       </p>
-                    </div>
-                 </div>
-                 {/* History API Control */}
-                 <div>
-                     <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3 flex items-center gap-2 mt-4 border-t border-[var(--border-card)] pt-4">
-                        自定义大模型 API 配置 (选填)
-                     </div>
-                     <div className="space-y-4">
-                        <div>
-                           <label className="text-[11px] text-[var(--text-disabled)] mb-1 block font-mono">自定义 LLM_API_URL</label>
-                           <input 
-                              type="text" 
-                              value={llmApiUrl} 
-                              onChange={(e) => setLlmApiUrl(e.target.value)} 
-                              className="w-full bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl px-4 py-2 text-sm text-[var(--text-main)] outline-none focus:border-green-500 transition-colors"
-                              placeholder="例如: https://api.deepseek.com/chat/completions"
-                           />
-                        </div>
-                        <div>
-                           <label className="text-[11px] text-[var(--text-disabled)] mb-1 block font-mono">自定义 LLM_MODEL_NAME</label>
-                           <input 
-                              type="text" 
-                              value={llmModelName} 
-                              onChange={(e) => setLlmModelName(e.target.value)} 
-                              className="w-full bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl px-4 py-2 text-sm text-[var(--text-main)] outline-none focus:border-green-500 transition-colors"
-                              placeholder="例如: deepseek-chat 或 gpt-3.5-turbo"
-                           />
-                        </div>
-                        <div>
-                           <label className="text-[11px] text-[var(--text-disabled)] mb-1 block font-mono">Google_Gemini / 自定义 API_KEY</label>
-                           <input 
-                              type="password" 
-                              value={geminiApiKey} 
-                              onChange={(e) => setGeminiApiKey(e.target.value)} 
-                              className="w-full bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl px-4 py-2 text-sm text-[var(--text-main)] outline-none focus:border-green-500 transition-colors tracking-widest placeholder:tracking-normal"
-                              placeholder="留空即使用共享API Key"
-                           />
-                        </div>
-                        <p className="text-[10px] text-[var(--text-disabled)] leading-relaxed bg-[var(--bg-hover)] p-3 rounded-lg border border-[var(--border-card)]">
-                          默认使用共享的 Google Gemini API。你可以配置兼容 OpenAI 格式的第三方接口（配置上述的 LLM_API_URL 和 模型名称）。如果配置了第三方接口，上方填写的 API_KEY 则用于请求该接口。
-                        </p>
-                     </div>
-                  </div>
+          {noticeMessage && (
+            <NoticeDialog
+              title="操作未完成"
+              message={noticeMessage}
+              onClose={() => setNoticeMessage(null)}
+            />
+          )}
 
-                  <div>
-                     <div className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3 flex items-center gap-2 mt-4 border-t border-[var(--border-card)] pt-4">
-                        历史数据接口配置 (选填)
-                     </div>
-                     <div className="space-y-4">
-                        <div className="flex flex-col gap-1.5">
-                           <label className="text-xs text-[var(--text-disabled)]">CUSTOM_HISTORY_API_URL</label>
-                           <input 
-                              type="text" 
-                              value={historyApiUrl} 
-                              onChange={(e) => setHistoryApiUrl(e.target.value)} 
-                              className="w-full bg-[var(--bg-input)] border border-[var(--border-card)] rounded-xl px-4 py-2 text-sm text-[var(--text-main)] outline-none focus:border-green-500 transition-colors"
-                              placeholder="例如: https://api.allorigins.win/raw?url=..."
-                           />
-                        </div>
-                        <p className="text-[10px] text-[var(--text-disabled)] leading-relaxed bg-[var(--bg-hover)] p-3 rounded-lg border border-[var(--border-card)]">
-                          当因为网络限制或官方防盗链机制导致获取历史开奖数据失败（尤其在 Vercel/Netlify 等边缘节点环境中）时，可以手动指定第三方代理或者直连的源 URL。
-                        </p>
-                     </div>
-                  </div>
-              </div>
+          {showHistoryModal && (
+            <HistoryModal
+              history={history}
+              lotteryResults={lotteryResults}
+              isFetchingResults={isFetchingResults}
+              historyTab={historyTab}
+              backtestPage={backtestPage}
+              expandedHistoryIds={expandedHistoryIds}
+              hasMoreHistory={hasMoreHistory}
+              isFetchingHistory={isFetchingHistory}
+              onClose={() => setShowHistoryModal(false)}
+              onHistoryTabChange={setHistoryTab}
+              onBacktestPageChange={setBacktestPage}
+              onLoadDrawResults={loadDrawResults}
+              onToggleExpand={toggleExpand}
+              onTogglePurchased={togglePurchased}
+              onDeleteRecord={deleteRecord}
+              onLoadMoreHistory={loadMoreHistory}
+            />
+          )}
+      </Suspense>
 
-              <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-                <button onClick={clearGuestHistory} className="w-full sm:w-auto px-4 py-2 text-xs font-semibold text-red-500 hover:bg-red-500/10 rounded-lg transition-colors border border-transparent hover:border-red-500/20">清空本地历史</button>
-                <div className="flex justify-end gap-3 w-full sm:w-auto">
-                  <button onClick={() => setShowSettingsModal(false)} className="px-5 py-2.5 text-sm font-semibold text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors">取消</button>
-                  <button onClick={saveSettings} className="px-6 py-2.5 bg-green-600 text-white font-semibold text-sm rounded-full hover:bg-green-700 shadow-lg shadow-green-500/20 transition-all">保存配置并重载</button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-
-        {/* History Modal */}
-        {showHistoryModal && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-[var(--bg-modal)] backdrop-blur-sm z-50 flex items-center justify-center p-4 lg:p-0"
-            onClick={() => setShowHistoryModal(false)}
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-[24px] p-6 lg:p-8 max-w-[700px] w-full shadow-2xl relative max-h-[90vh] overflow-hidden flex flex-col"
-              onClick={e => e.stopPropagation()}
-            >
-              <button onClick={() => setShowHistoryModal(false)} className="absolute top-6 right-6 text-[var(--text-disabled)] hover:text-[var(--text-main)] px-2 transition-colors"><X className="w-5 h-5" /></button>
-              
-              <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-4 border-b border-[var(--border-card)] pb-4 pr-8">
-                 <div>
-                    <h2 className="text-xl font-bold flex items-center gap-2 text-[var(--text-main)] mb-1">
-                      <History className="w-5 h-5" /> 历史数据
-                    </h2>
-                    <p className="text-xs text-[var(--text-disabled)]">查看往期生成的号码与实购记录。</p>
-                 </div>
-                 
-                 <div className="flex gap-1.5 bg-[var(--bg-input)] p-1 rounded-xl border border-[var(--border-card)] mt-3 sm:mt-0 self-start sm:self-auto">
-                    <button 
-                       className={`px-4 py-1.5 text-[11px] font-bold rounded-lg transition-all ${historyTab === 'purchased' ? 'bg-[var(--bg-card)] text-amber-500 shadow border border-[var(--border-card)]' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}
-                       onClick={() => { setHistoryTab('purchased'); setBacktestPage(1); }}
-                    >
-                       回测记录 (已购)
-                    </button>
-                    <button 
-                       className={`px-4 py-1.5 text-[11px] font-bold rounded-lg transition-all ${historyTab === 'generated' ? 'bg-[var(--bg-card)] text-blue-500 shadow border border-[var(--border-card)]' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}
-                       onClick={() => { setHistoryTab('generated'); setBacktestPage(1); }}
-                    >
-                       生成记录 (全部)
-                    </button>
-                 </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar my-2">
-                {historyTab === 'purchased' && (
-                  <>
-                    {isFetchingResults ? (
-                      <div className="flex justify-center items-center py-10"><Dices className="animate-spin w-8 h-8 text-[var(--text-muted)]" /></div>
-                    ) : lotteryResults.length === 0 ? (
-                      <div className="text-center py-12 flex flex-col items-center gap-4">
-                         <p className="text-[var(--text-muted)] text-sm">暂未加载最新开奖数据，无法进行回测比对。</p>
-                         <button onClick={loadDrawResults} className="px-6 py-3 bg-amber-500 text-white font-bold rounded-xl shadow-lg hover:bg-amber-600 active:scale-95 transition-all">
-                           加载官网最新开奖数据
-                         </button>
-                      </div>
-                    ) : history.filter(h => h.purchased).length === 0 ? (
-                      <div className="text-center py-12">
-                         <p className="text-[var(--text-muted)] text-sm">暂无标记为实购的记录，请先在记录列表中点亮对勾标志。</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
-                        {(() => {
-                            const purchasedRecords = history.filter(h => h.purchased).sort((a,b) => {
-                               const tA = getMetadata(a)?.purchased_at || a.created_at;
-                               const tB = getMetadata(b)?.purchased_at || b.created_at;
-                               return new Date(tB).getTime() - new Date(tA).getTime();
-                            });
-                            const totalPages = Math.ceil(purchasedRecords.length / 3);
-                            const currentRecords = purchasedRecords.slice((backtestPage - 1) * 3, backtestPage * 3);
-
-                            return (
-                               <>
-                                 {currentRecords.map((record) => {
-                                   const matchRes = checkHits(record, lotteryResults);
-                                   const meta = getMetadata(record);
-                                   
-                                   return (
-                                     <div key={"bt-" + record.id} className="bg-[var(--bg-input)] rounded-xl p-4 border border-[var(--border-card)]">
-                                       <div className="flex justify-between items-center mb-3 border-b border-[var(--border-card)] pb-2">
-                                         <div className="text-sm font-semibold flex gap-2 items-center text-[var(--text-main)]">
-                                           {format(new Date(meta?.purchased_at || record.created_at), 'MM-dd HH:mm')} 购买记录
-                                           {meta?.pkg && <span className="bg-[var(--bg-hover)] border border-[var(--border-card)] text-[10px] text-[var(--text-muted)] px-2 py-0.5 rounded-full">{meta.pkg}</span>}
-                                         </div>
-                                         <span className="text-[10px] text-green-700 dark:text-green-500 bg-green-500/10 px-2 py-1 rounded font-bold border border-green-500/20">已实购</span>
-                                       </div>
-                                       
-                                       {matchRes?.isWaiting ? (
-                                          <div className="bg-[var(--bg-card)] rounded-lg p-3 border border-[var(--border-card)] shadow-sm text-center">
-                                              <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">⏳ 待开奖</div>
-                                              <div className="text-[11px] text-[var(--text-disabled)] mt-1">此实购号码对应的开奖结果尚未公布</div>
-                                          </div>
-                                       ) : matchRes && matchRes.winningLines.length > 0 ? (
-                                         <div className="flex flex-col gap-2">
-                                            <div className="text-[11px] text-[var(--text-muted)] flex items-center justify-between">
-                                                <span>校验开奖: 第 <span className="text-[var(--text-main)] font-mono font-bold mr-1">{matchRes.drawNum}</span>期</span>
-                                                <span className="text-amber-600 dark:text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded">🎉 中奖 {matchRes.winningLines.length} 注</span>
-                                            </div>
-                                            {matchRes.winningLines.map((line: any, idx: number) => (
-                                              <div key={idx} className="bg-[var(--bg-card)] rounded-lg p-3 border border-amber-500/30 shadow-sm relative overflow-hidden flex flex-col gap-2">
-                                                <div className="absolute top-0 right-0 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] font-bold px-2 py-1 rounded-bl-lg z-10">
-                                                   {line.hasFloating ? "含浮动奖金" : `奖金: ${line.totalPrizeNum}元`}
-                                                </div>
-                                                <div className="text-[11px] text-[var(--text-disabled)] mb-0 font-semibold flex flex-wrap items-center gap-2 mt-1">
-                                                   <span>第 {line.lineNum} 行 {line.isMultiplex ? <span className="text-amber-600 dark:text-amber-500 font-bold">(复式票)</span> : "(单式票)"}</span>
-                                                   <span className="text-amber-600 bg-amber-500/10 px-1.5 py-0.5 rounded font-bold text-[10px]">
-                                                      {Object.entries(line.hitCounts).map(([lvl, cnt]) => `${cnt}注${lvl}等奖`).join(', ')}
-                                                   </span>
-                                                </div>
-                                                <div className="flex flex-col gap-1 text-xs font-mono bg-[var(--bg-input)] border border-[var(--border-card)] p-2 rounded relative">
-                                                   <div className="text-[var(--text-main)] break-all mt-1">
-                                                      <span className="text-red-500/70 dark:text-red-400/70">{line.frontStr}</span> <span className="text-[var(--text-disabled)] mx-1">|</span> <span className="text-blue-500/70 dark:text-blue-400/70">{line.backStr}</span>
-                                                   </div>
-                                                   <div className="text-[var(--text-disabled)] mt-1 border-t border-[var(--border-card)] pt-2 flex items-center">
-                                                     <span className="w-10">命中:</span> 
-                                                     <span className="text-red-500 dark:text-red-400 font-bold tracking-widest">{line.fHits.length > 0 ? line.fHits.map((n: number) => n.toString().padStart(2, '0')).join(' ') : '--'}</span>
-                                                     {line.fHits.length > 0 && line.bHits.length > 0 && <span className="mx-2">+</span>}
-                                                     <span className="text-blue-500 dark:text-blue-400 font-bold tracking-widest">{line.bHits.length > 0 ? line.bHits.map((n: number) => n.toString().padStart(2, '0')).join(' ') : (line.fHits.length === 0 ? '--' : '')}</span>
-                                                   </div>
-                                                </div>
-                                                
-                                                {line.isMultiplex && line.winningSubTickets && line.winningSubTickets.length > 0 && (
-                                                   <div className="mt-1 border-t border-amber-500/20 pt-2 flex flex-col gap-1.5">
-                                                      <div className="text-[10px] text-amber-600/80 dark:text-amber-400/80 mb-1">拆分后中奖明细 ({line.winningSubTickets.length}注):</div>
-                                                      <div className="max-h-32 overflow-y-auto flex flex-col gap-1.5 pr-1 custom-scrollbar">
-                                                        {line.winningSubTickets.map((sub: any, sIdx: number) => (
-                                                          <div key={sIdx} className="text-[10px] font-mono flex items-center gap-2 bg-amber-500/5 p-1.5 rounded">
-                                                             <span className="text-[var(--text-disabled)] w-10 shrink-0">注{sub.subId}:</span>
-                                                             <div className="flex-1 min-w-0 flex items-center truncate text-[var(--text-main)]">
-                                                                <span className="text-red-500/80 dark:text-red-400/80">{sub.frontStr}</span>
-                                                                <span className="text-[var(--text-disabled)] mx-1 shrink-0">|</span>
-                                                                <span className="text-blue-500/80 dark:text-blue-400/80">{sub.backStr}</span>
-                                                             </div>
-                                                             <span className="text-amber-600 dark:text-amber-400 font-bold shrink-0 self-start ml-2 bg-amber-500/10 px-1 rounded">
-                                                                {sub.pLevel}等奖 {sub.amount}
-                                                             </span>
-                                                          </div>
-                                                        ))}
-                                                      </div>
-                                                   </div>
-                                                )}
-                                              </div>
-                                            ))}
-                                         </div>
-                                       ) : matchRes && matchRes.bestNoPrizeInfo && (matchRes.bestNoPrizeInfo.fHits.length > 0 || matchRes.bestNoPrizeInfo.bHits.length > 0) ? (
-                                         <div className="bg-[var(--bg-card)] rounded-lg p-3 border border-[var(--border-card)] shadow-sm">
-                                           <div className="text-[11px] text-[var(--text-muted)] mb-2 flex flex-col gap-1 sm:flex-row sm:justify-between sm:items-center">
-                                              <span>校验开奖: 第 <span className="text-[var(--text-main)] font-mono font-bold mr-1">{matchRes.drawNum}</span>期 (第{matchRes.bestNoPrizeComboNum}行最高对 {matchRes.bestNoPrizeInfo.fHits.length}+{matchRes.bestNoPrizeInfo.bHits.length})</span>
-                                              <span className="text-[var(--text-disabled)] font-bold px-2 py-0.5 rounded self-start sm:self-auto border border-[var(--border-card)]">未中奖</span>
-                                           </div>
-                                           <div className="flex flex-col gap-1 text-xs font-mono bg-[var(--bg-input)] border border-[var(--border-card)] p-2 rounded">
-                                              <div className="text-[var(--text-disabled)] flex items-center">
-                                                <span className="w-16">红球命中:</span> 
-                                                <span className="text-[var(--text-main)] font-bold ml-2 tracking-widest">{matchRes.bestNoPrizeInfo.fHits.length > 0 ? matchRes.bestNoPrizeInfo.fHits.map((n: number) => n.toString().padStart(2, '0')).join(' ') : '--'}</span>
-                                              </div>
-                                              <div className="text-[var(--text-disabled)] flex items-center">
-                                                <span className="w-16">蓝球命中:</span> 
-                                                <span className="text-[var(--text-main)] font-bold ml-2 tracking-widest">{matchRes.bestNoPrizeInfo.bHits.length > 0 ? matchRes.bestNoPrizeInfo.bHits.map((n: number) => n.toString().padStart(2, '0')).join(' ') : '--'}</span>
-                                              </div>
-                                           </div>
-                                         </div>
-                                       ) : (
-                                         <div className="text-xs text-[var(--text-disabled)] italic p-2 text-center bg-[var(--bg-card)] rounded-lg border border-[var(--border-card)]">未产生任何命中号码，或者找不到可用于匹配的数据。</div>
-                                       )}
-                                     </div>
-                                   )
-                                 })}
-                                 
-                                 {totalPages > 1 && (
-                                   <div className="flex justify-center items-center gap-3 mt-6 border-t border-[var(--border-card)] pt-4">
-                                     <button disabled={backtestPage <= 1} onClick={() => setBacktestPage(p=>p-1)} className="px-3 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-md text-[11px] disabled:opacity-30 text-[var(--text-main)] hover:bg-[var(--bg-hover)] transition-colors">上一页</button>
-                                     <span className="text-[11px] text-[var(--text-muted)] font-mono">{backtestPage} / {totalPages}</span>
-                                     <button disabled={backtestPage >= totalPages} onClick={() => setBacktestPage(p=>p+1)} className="px-3 py-1.5 bg-[var(--bg-input)] border border-[var(--border-card)] rounded-md text-[11px] disabled:opacity-30 text-[var(--text-main)] hover:bg-[var(--bg-hover)] transition-colors">下一页</button>
-                                   </div>
-                                 )}
-                               </>
-                            );
-                        })()}
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {historyTab === 'generated' && (
-                  <div className="space-y-3">
-                     {history.length === 0 ? (
-                       <div className="text-center py-12 text-[var(--text-muted)] text-sm">暂无生成记录。</div>
-                     ) : (
-                       <>
-                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                           {history.map(item => {
-                              const draws = parseHistoryRecord(item);
-                              if (draws.length === 0) return null;
-                              const mainDraw = draws[0];
-                              const meta = getMetadata(item);
-                              const methodLabel = ({'random':'随机漫步','iching':'易经理数','stats':'走势分析'} as any)[meta?.mode || ''] || '未知';
-                              
-                              return (
-                                <div key={item.id} className="flex flex-col p-4 bg-[var(--bg-input)] hover:bg-[var(--bg-hover)] border border-[var(--border-card)] rounded-xl transition-colors relative cursor-pointer" onClick={(e) => toggleExpand(item.id, e)}>
-                                  <div className="flex justify-between items-center mb-2">
-                                     <span className="text-[10px] text-[var(--text-disabled)]">{format(new Date(item.created_at), 'yyyy-MM-dd HH:mm')}</span>
-                                     {item.purchased ? (
-                                        <span className="text-[10px] text-green-700 bg-green-500/10 border border-green-500/20 px-1.5 py-0.5 rounded font-bold">已购</span>
-                                     ) : (
-                                        <button 
-                                          className="text-[10px] bg-[var(--bg-card)] border border-[var(--border-card)] text-[var(--text-muted)] hover:text-green-500 hover:border-green-500/50 px-2 py-0.5 rounded transition-colors"
-                                          onClick={(e) => { e.stopPropagation(); togglePurchased(item.id, item.purchased); }}
-                                        >
-                                          设为已购
-                                        </button>
-                                     )}
-                                  </div>
-                                  <div className="font-mono text-sm tracking-wide gap-1.5 flex flex-wrap items-center">
-                                     {mainDraw.front.map((n, i) => <span key={`fh-${i}`} className="text-red-500 dark:text-red-400 font-black">{formatNumber(n)}</span>)}
-                                     <span className="text-[var(--text-muted)] mx-1">+</span>
-                                     {mainDraw.back.map((n, i) => <span key={`bh-${i}`} className="text-blue-500 dark:text-blue-400 font-black">{formatNumber(n)}</span>)}
-                                  </div>
-                                  
-                                  <div className="flex justify-between items-end mt-3">
-                                     <div className="flex items-center gap-2">
-                                       <span className="text-[9px] bg-[var(--bg-hover)] border border-[var(--border-card)] text-[var(--text-muted)] px-1.5 py-0.5 rounded-md">
-                                          {methodLabel}
-                                       </span>
-                                       {meta?.pkg && <span className="text-[9px] bg-[var(--bg-hover)] border border-[var(--border-card)] text-[var(--text-muted)] px-1.5 py-0.5 rounded-md">{meta.pkg}</span>}
-                                     </div>
-                                     <div className="flex items-center gap-2">
-                                        {draws.length > 1 && (
-                                           <span className="text-[10px] text-[var(--text-muted)] flex items-center gap-1">共{draws.length}注 <ChevronDown className={`w-3 h-3 transition-transform ${expandedHistoryIds.has(item.id) ? 'rotate-180' : ''}`} /></span>
-                                        )}
-                                        <button 
-                                          className="text-[var(--text-muted)] hover:text-red-500 p-1" 
-                                          onClick={(e) => { e.stopPropagation(); deleteRecord(item.id); }}
-                                        >
-                                           <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
-                                     </div>
-                                  </div>
-
-                                  {expandedHistoryIds.has(item.id) && draws.length > 1 && (
-                                     <div className="flex flex-col gap-1.5 mt-3 border-t border-[var(--border-card)] pt-3 animate-fade-in">
-                                        {draws.slice(1).map((d, didx) => (
-                                           <div key={didx} className="font-mono text-[11px] flex gap-1 items-center bg-[var(--bg-card)] px-2 py-1.5 rounded border border-[var(--border-card)]">
-                                             <span className="text-[var(--text-disabled)] w-6 shrink-0">{didx+2}.</span>
-                                             {d.front.map((n, i) => <span key={`fhd-${i}`} className="text-red-500/80 font-bold">{formatNumber(n)}</span>)}
-                                             <span className="text-[var(--text-muted)] mx-0.5">+</span>
-                                             {d.back.map((n, i) => <span key={`bhd-${i}`} className="text-blue-500/80 font-bold">{formatNumber(n)}</span>)}
-                                           </div>
-                                        ))}
-                                     </div>
-                                  )}
-                                </div>
-                              )
-                           })}
-                         </div>
-                         
-                         {hasMoreHistory && (
-                           <div className="flex justify-center mt-6 py-4">
-                              <button 
-                                onClick={loadMoreHistory}
-                                disabled={isFetchingHistory}
-                                className="px-6 py-2 bg-[var(--bg-input)] border border-[var(--border-card)] text-sm text-[var(--text-main)] hover:bg-[var(--bg-hover)] rounded-full transition-all flex items-center gap-2"
-                              >
-                                {isFetchingHistory && <Dices className="w-4 h-4 animate-spin" />}
-                                {isFetchingHistory ? '加载中...' : '加载更多云端记录'}
-                              </button>
-                           </div>
-                         )}
-                       </>
-                     )}
-                  </div>
-                )}
-              </div>
-              
-              <div className="mt-4 pt-4 border-t border-[var(--border-card)] flex justify-end">
-                <button onClick={() => setShowHistoryModal(false)} className="px-6 py-2.5 bg-[var(--bg-input)] border border-[var(--border-card)] text-[var(--text-main)] font-semibold text-[13px] rounded-full hover:bg-[var(--bg-hover)] transition-colors">关闭明细概览</button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-        {/* Trend Modal */}
-        {showTrendModal && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-[var(--bg-modal)] backdrop-blur-sm z-50 flex items-center justify-center p-4 lg:p-0"
-            onClick={() => setShowTrendModal(false)}
-          >
-            <motion.div 
-               initial={{ scale: 0.9, y: 20 }}
-               animate={{ scale: 1, y: 0 }}
-               exit={{ scale: 0.9, y: 20 }}
-               className="bg-[var(--bg-card)] border border-[var(--border-card)] rounded-[24px] p-6 lg:p-8 max-w-[800px] w-full shadow-2xl relative max-h-[90vh] overflow-hidden flex flex-col"
-               onClick={e => e.stopPropagation()}
-             >
-               <button onClick={() => setShowTrendModal(false)} className="absolute top-6 right-6 text-[var(--text-disabled)] hover:text-[var(--text-main)] transition-colors"><X className="w-5 h-5" /></button>
-               
-               <h2 className="text-xl font-bold mb-1 flex items-center gap-2 text-blue-600 dark:text-blue-500">
-                 <TrendingUp className="w-5 h-5" /> 历史出号频率走势
-               </h2>
-               <p className="text-xs text-[var(--text-disabled)] mb-6">基于最近 50 期的红蓝球出号频率统计 (开奖结果来源于官网接口)。</p>
-
-               <div className="w-full flex-1 min-h-[350px] overflow-hidden flex flex-col justify-center">
-                 {isFetchingResults ? (
-                   <div className="flex justify-center items-center h-full"><Dices className="animate-spin w-8 h-8 text-[var(--text-muted)]" /></div>
-                 ) : lotteryResults.length === 0 ? (
-                   <div className="text-center h-full flex flex-col items-center justify-center gap-4">
-                      <p className="text-[var(--text-muted)] text-sm">暂未加载历史开奖数据，无法进行走势分析。</p>
-                      <button onClick={loadDrawResults} className="px-6 py-3 bg-blue-500 text-white font-bold rounded-xl shadow-lg hover:bg-blue-600 active:scale-95 transition-all">
-                        从竞彩网 (Sporttery) 加载数据
-                      </button>
-                   </div>
-                 ) : (
-                   <div className="flex flex-col gap-6 h-full overflow-y-auto pr-2 pb-4">
-                     <div className="text-right text-[10px] text-[var(--text-muted)] mt-1">
-                       成功从 竞彩网获取 {lotteryResults.length} 期数据
-                     </div>
-                     <div className="w-full h-[300px] shrink-0">
-                       <ResponsiveContainer width="100%" height="100%">
-                         <ComposedChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-card)" />
-                           <XAxis dataKey="num" tick={{fontSize: 10, fill: 'var(--text-disabled)'}} axisLine={false} tickLine={false} />
-                           <YAxis tick={{fontSize: 10, fill: 'var(--text-disabled)'}} axisLine={false} tickLine={false} />
-                           <Tooltip 
-                             contentStyle={{backgroundColor: 'var(--bg-input)', borderColor: 'var(--border-card)', borderRadius: '8px', fontSize: '12px'}} 
-                             itemStyle={{color: 'var(--text-main)'}}
-                           />
-                           <Legend wrapperStyle={{fontSize: '12px', color: 'var(--text-disabled)'}} />
-                           <Line type="monotone" dataKey="frontFreq" name="红球频率(折线)" stroke="#ef4444" strokeWidth={2} dot={{r: 2}} activeDot={{r: 5}} />
-                           <Line type="monotone" dataKey="backFreq" name="蓝球频率(折线)" stroke="#3b82f6" strokeWidth={2} dot={{r: 2}} activeDot={{r: 5}} />
-                           <Bar dataKey="frontFreq" name="红球频率(柱状)" fill="#ef4444" radius={[4, 4, 0, 0]} opacity={0.3} />
-                           <Bar dataKey="backFreq" name="蓝球频率(柱状)" fill="#3b82f6" radius={[4, 4, 0, 0]} opacity={0.3} />
-                         </ComposedChart>
-                       </ResponsiveContainer>
-                     </div>
-
-                     <div className="bg-[var(--bg-main)] rounded-lg border border-[var(--border-card)] w-full overflow-x-auto shrink-0 shadow-sm relative">
-                        <table className="w-full text-sm text-center whitespace-nowrap min-w-[300px]">
-                          <thead className="bg-[var(--bg-hover)] text-[var(--text-disabled)] text-xs uppercase sticky top-0 z-10 shadow-sm">
-                            <tr>
-                              <th className="px-4 py-3 font-medium border-b border-[var(--border-card)]">号码</th>
-                              <th className="px-4 py-3 font-medium border-b border-[var(--border-card)] text-red-500/80">红球出现次数</th>
-                              <th className="px-4 py-3 font-medium border-b border-[var(--border-card)] text-blue-500/80">蓝球出现次数</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-[var(--border-card)]">
-                            {trendData.map((d) => (
-                              <tr key={d.num} className="hover:bg-[var(--bg-hover)] transition-colors">
-                                <td className="px-4 py-2 font-bold text-[var(--text-main)] border-r border-[var(--border-card)]/30">{d.num}</td>
-                                <td className="px-4 py-2 text-red-500 font-medium border-r border-[var(--border-card)]/30">{d.frontFreq > 0 ? d.frontFreq : '-'}</td>
-                                <td className="px-4 py-2 text-blue-500 font-medium">{d.backFreq != null ? (d.backFreq > 0 ? d.backFreq : '-') : 'N/A'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                     </div>
-                   </div>
-                 )}
-               </div>
-               
-               <div className="mt-4 flex justify-end">
-                 <button onClick={() => setShowTrendModal(false)} className="px-6 py-2.5 bg-[var(--bg-hover)] text-[var(--text-main)] font-semibold text-sm rounded-full hover:bg-[var(--border-card)] transition-colors">关闭图表</button>
-               </div>
-            </motion.div>
-          </motion.div>
-        )}
-
-      </AnimatePresence>
+      {showTrendModal && (
+        <Suspense fallback={null}>
+          <TrendModal
+            trendData={trendData}
+            lotteryResults={lotteryResults}
+            isFetchingResults={isFetchingResults}
+            onClose={() => setShowTrendModal(false)}
+            onLoadDrawResults={loadDrawResults}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
