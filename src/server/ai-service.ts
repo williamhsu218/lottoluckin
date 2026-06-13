@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import { buildAiPrompt, parseAiDraws, parseJsonishArray, type AiGenerateRequest } from '../shared/ai';
+import { buildAiPrompt, parseAiDraws, type AiGenerateRequest } from '../shared/ai';
 import type { DrawSet } from '../shared/lottery';
 
 export type AiGenerateResult = {
@@ -56,7 +56,7 @@ export async function generateAiDraws(input: AiGenerateRequest): Promise<AiGener
 
     const jsonResp = await res.json();
     const textResponse = jsonResp.choices?.[0]?.message?.content || jsonResp.choices?.[0]?.message?.reasoning_content || jsonResp.message?.content || '';
-    const draws = parseAiDraws(parseJsonishArray(textResponse));
+    const draws = parseAiDraws(textResponse);
     if (draws.length === 0) {
       throw new Error(`Custom LLM returned no usable draws. Message content: ${String(textResponse || JSON.stringify(jsonResp)).slice(0, 800)}`);
     }
@@ -90,7 +90,7 @@ export async function generateAiDraws(input: AiGenerateRequest): Promise<AiGener
     },
   });
 
-  const draws = parseAiDraws(parseJsonishArray(response.text?.trim() || '[]'));
+  const draws = parseAiDraws(response.text?.trim() || '[]');
   if (draws.length === 0) {
     throw new Error(`Gemini returned no usable draws. Raw response: ${(response.text || '').slice(0, 500)}`);
   }

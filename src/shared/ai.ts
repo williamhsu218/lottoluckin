@@ -61,13 +61,29 @@ export function parseAiDraws(value: unknown): DrawSet[] {
     return front.length > 0 && back.length > 0 ? { front, back } : null;
   };
 
+  const collectTextDraws = (text: string): DrawSet[] => {
+    const draws: DrawSet[] = [];
+    const pattern = /(?:前区|红球|front(?:\s*area)?|red(?:\s*balls?)?)\s*[:：=\-]?\s*([0-9\s,，、|+]+?)(?:后区|蓝球|back(?:\s*area)?|blue(?:\s*balls?)?)\s*[:：=\-]?\s*([0-9\s,，、|+]+)/gi;
+    let match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(text)) !== null) {
+      const front = toNumberList(match[1]).filter(n => n >= 1 && n <= 35).slice(0, 5);
+      const back = toNumberList(match[2]).filter(n => n >= 1 && n <= 12).slice(0, 2);
+      if (front.length === 5 && back.length === 2) {
+        draws.push({ front, back });
+      }
+    }
+
+    return draws;
+  };
+
   const collectDraws = (input: unknown, depth = 0): DrawSet[] => {
     if (depth > 8 || input == null) return [];
     if (typeof input === 'string') {
       try {
         return collectDraws(parseJsonishArray(input), depth + 1);
       } catch (e) {
-        return [];
+        return collectTextDraws(input);
       }
     }
 

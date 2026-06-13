@@ -101,4 +101,10 @@ describe('AI prompt and response helpers', () => {
       { front: [1, 2, 3, 4, 5], back: [1, 2] },
     ]);
   });
+
+  it('extracts draws from explanatory Chinese text when JSON parsing is impossible', () => {
+    expect(parseAiDraws('我们被要求返回JSON，但这里给出号码：前区：05 01 03 02 04 后区：02 01。')).toEqual([
+      { front: [1, 2, 3, 4, 5], back: [1, 2] },
+    ]);
+  });
 });

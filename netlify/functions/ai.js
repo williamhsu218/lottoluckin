@@ -76,13 +76,29 @@ function parseAiDraws(value) {
     return front.length > 0 && back.length > 0 ? { front, back } : null;
   };
 
+  const collectTextDraws = (text) => {
+    const draws = [];
+    const pattern = /(?:前区|红球|front(?:\s*area)?|red(?:\s*balls?)?)\s*[:：=\-]?\s*([0-9\s,，、|+]+?)(?:后区|蓝球|back(?:\s*area)?|blue(?:\s*balls?)?)\s*[:：=\-]?\s*([0-9\s,，、|+]+)/gi;
+    let match;
+
+    while ((match = pattern.exec(text)) !== null) {
+      const front = toNumberList(match[1]).filter(n => n >= 1 && n <= 35).slice(0, 5);
+      const back = toNumberList(match[2]).filter(n => n >= 1 && n <= 12).slice(0, 2);
+      if (front.length === 5 && back.length === 2) {
+        draws.push({ front, back });
+      }
+    }
+
+    return draws;
+  };
+
   const collectDraws = (input, depth = 0) => {
     if (depth > 8 || input == null) return [];
     if (typeof input === 'string') {
       try {
         return collectDraws(parseJsonishArray(input), depth + 1);
       } catch (e) {
-        return [];
+        return collectTextDraws(input);
       }
     }
 
@@ -155,7 +171,7 @@ async function generateAiDraws(input) {
     }
     const jsonResp = await res.json();
     const textResponse = jsonResp.choices?.[0]?.message?.content || jsonResp.choices?.[0]?.message?.reasoning_content || jsonResp.message?.content || '';
-    const draws = parseAiDraws(parseJsonishArray(textResponse));
+    const draws = parseAiDraws(textResponse);
     if (draws.length === 0) {
       throw new Error(`Custom LLM returned no usable draws. Message content: ${String(textResponse || JSON.stringify(jsonResp)).slice(0, 800)}`);
     }
@@ -188,7 +204,7 @@ async function generateAiDraws(input) {
     },
   });
 
-  const draws = parseAiDraws(parseJsonishArray(response.text?.trim() || '[]'));
+  const draws = parseAiDraws(response.text?.trim() || '[]');
   if (draws.length === 0) {
     throw new Error(`Gemini returned no usable draws. Raw response: ${(response.text || '').slice(0, 500)}`);
   }
