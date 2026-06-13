@@ -44,6 +44,12 @@ describe('AI prompt and response helpers', () => {
     ]);
   });
 
+  it('extracts JSON from explanatory model text', () => {
+    expect(parseJsonishArray('结果如下：{"draws":[{"front":[1,2,3,4,5],"back":[1,2]}]}')).toEqual({
+      draws: [{ front: [1, 2, 3, 4, 5], back: [1, 2] }],
+    });
+  });
+
   it('normalizes valid AI draws and filters malformed entries', () => {
     expect(parseAiDraws([
       { front: ['5', 1, 'bad'], back: ['2', 1] },
@@ -51,6 +57,14 @@ describe('AI prompt and response helpers', () => {
       { nope: true },
     ])).toEqual([
       { front: [1, 5], back: [1, 2] },
+    ]);
+  });
+
+  it('accepts wrapped draw objects', () => {
+    expect(parseAiDraws({
+      draws: [{ front: ['5', 1, 3, 4, 2], back: ['2', 1] }],
+    })).toEqual([
+      { front: [1, 2, 3, 4, 5], back: [1, 2] },
     ]);
   });
 });

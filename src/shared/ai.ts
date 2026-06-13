@@ -31,9 +31,11 @@ export function buildAiPrompt({ mode, pkg, results }: AiGenerateRequest) {
 }
 
 export function parseAiDraws(value: unknown): DrawSet[] {
-  if (!Array.isArray(value)) return [];
+  const items = Array.isArray(value)
+    ? value
+    : (value && typeof value === 'object' && Array.isArray((value as any).draws) ? (value as any).draws : []);
 
-  return value
+  return items
     .map((item: any) => ({
       front: Array.isArray(item?.front) ? item.front.map(Number).filter(Number.isFinite).sort((a: number, b: number) => a - b) : [],
       back: Array.isArray(item?.back) ? item.back.map(Number).filter(Number.isFinite).sort((a: number, b: number) => a - b) : [],
@@ -48,5 +50,18 @@ export function parseJsonishArray(text: string) {
   } else if (jsonStr.startsWith('```')) {
     jsonStr = jsonStr.replace(/^```/, '').replace(/```$/, '').trim();
   }
+
+  if (!jsonStr.startsWith('[') && !jsonStr.startsWith('{')) {
+    const arrayStart = jsonStr.indexOf('[');
+    const arrayEnd = jsonStr.lastIndexOf(']');
+    const objectStart = jsonStr.indexOf('{');
+    const objectEnd = jsonStr.lastIndexOf('}');
+    if (objectStart >= 0 && objectEnd > objectStart && (arrayStart < 0 || objectStart < arrayStart)) {
+      jsonStr = jsonStr.slice(objectStart, objectEnd + 1);
+    } else if (arrayStart >= 0 && arrayEnd > arrayStart) {
+      jsonStr = jsonStr.slice(arrayStart, arrayEnd + 1);
+    }
+  }
+
   return JSON.parse(jsonStr || '[]');
 }

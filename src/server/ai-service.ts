@@ -26,10 +26,11 @@ export async function generateAiDraws(input: AiGenerateRequest): Promise<AiGener
       body: JSON.stringify({
         model: modelToUse,
         messages: [
-          { role: 'system', content: systemInstruction + '\n请务必只返回能够被JSON.parse解析的JSON数组格式（[{front:[], back:[]}]），不要包含多余文本或 Markdown 代码块标识符。' },
+          { role: 'system', content: systemInstruction + '\n请务必只返回能够被JSON.parse解析的JSON对象格式：{"draws":[{"front":[1,2,3,4,5],"back":[1,2]}]}。不要包含多余文本或 Markdown 代码块标识符。' },
           { role: 'user', content: prompt },
         ],
         temperature: 0.7,
+        response_format: { type: 'json_object' },
       }),
     });
 

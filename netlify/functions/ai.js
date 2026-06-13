@@ -31,12 +31,28 @@ function parseJsonishArray(text) {
   } else if (jsonStr.startsWith('```')) {
     jsonStr = jsonStr.replace(/^```/, '').replace(/```$/, '').trim();
   }
+
+  if (!jsonStr.startsWith('[') && !jsonStr.startsWith('{')) {
+    const arrayStart = jsonStr.indexOf('[');
+    const arrayEnd = jsonStr.lastIndexOf(']');
+    const objectStart = jsonStr.indexOf('{');
+    const objectEnd = jsonStr.lastIndexOf('}');
+    if (objectStart >= 0 && objectEnd > objectStart && (arrayStart < 0 || objectStart < arrayStart)) {
+      jsonStr = jsonStr.slice(objectStart, objectEnd + 1);
+    } else if (arrayStart >= 0 && arrayEnd > arrayStart) {
+      jsonStr = jsonStr.slice(arrayStart, arrayEnd + 1);
+    }
+  }
+
   return JSON.parse(jsonStr || '[]');
 }
 
 function parseAiDraws(value) {
-  if (!Array.isArray(value)) return [];
-  return value
+  const items = Array.isArray(value)
+    ? value
+    : (value && typeof value === 'object' && Array.isArray(value.draws) ? value.draws : []);
+
+  return items
     .map(item => ({
       front: Array.isArray(item?.front) ? item.front.map(Number).filter(Number.isFinite).sort((a, b) => a - b) : [],
       back: Array.isArray(item?.back) ? item.back.map(Number).filter(Number.isFinite).sort((a, b) => a - b) : [],
@@ -62,10 +78,11 @@ async function generateAiDraws(input) {
       body: JSON.stringify({
         model: modelToUse,
         messages: [
-          { role: 'system', content: systemInstruction + '\n请务必只返回能够被JSON.parse解析的JSON数组格式（[{front:[], back:[]}]），不要包含多余文本或 Markdown 代码块标识符。' },
+          { role: 'system', content: systemInstruction + '\n请务必只返回能够被JSON.parse解析的JSON对象格式：{"draws":[{"front":[1,2,3,4,5],"back":[1,2]}]}。不要包含多余文本或 Markdown 代码块标识符。' },
           { role: 'user', content: prompt },
         ],
         temperature: 0.7,
+        response_format: { type: 'json_object' },
       }),
     });
 
