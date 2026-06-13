@@ -16,23 +16,38 @@ export async function generateAiDraws(input: AiGenerateRequest): Promise<AiGener
     const isChatCompletion = customUrl.endsWith('/chat/completions') || customUrl.includes('/v1/messages');
     const finalUrl = isChatCompletion ? customUrl : customUrl.replace(/\/$/, '') + '/chat/completions';
     const modelToUse = process.env.LLM_MODEL_NAME?.trim() || 'gpt-3.5-turbo';
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-    const res = await fetch(finalUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-      },
-      body: JSON.stringify({
-        model: modelToUse,
-        messages: [
-          { role: 'system', content: systemInstruction + '\n请务必只返回能够被JSON.parse解析的JSON对象格式：{"draws":[{"front":[1,2,3,4,5],"back":[1,2]}]}。不要包含多余文本或 Markdown 代码块标识符。' },
-          { role: 'user', content: prompt },
-        ],
-        temperature: 0.7,
-        response_format: { type: 'json_object' },
-      }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(finalUrl, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model: modelToUse,
+          messages: [
+            { role: 'system', content: systemInstruction + '\n请务必只返回能够被JSON.parse解析的JSON对象格式：{"draws":[{"front":[1,2,3,4,5],"back":[1,2]}]}。不要包含多余文本或 Markdown 代码块标识符。' },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.3,
+          max_tokens: 700,
+          stream: false,
+          response_format: { type: 'json_object' },
+        }),
+      });
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        throw new Error('Custom LLM timed out after 15s');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!res.ok) {
       const errorText = await res.text().catch(() => '');

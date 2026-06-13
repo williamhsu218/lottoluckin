@@ -12,7 +12,7 @@ export function buildAiPrompt({ mode, pkg, results }: AiGenerateRequest) {
 
   if (mode === 'stats') {
     const historySummary = results
-      .slice(0, 30)
+      .slice(0, 12)
       .map(r => `期号:${r.lotteryDrawNum} 红球:${r.lotteryDrawResult.substring(0, 14)} 蓝球:${r.lotteryDrawResult.substring(15)}`)
       .join('\n');
     systemInstruction = '作为中国体彩超级大乐透资深走势分析专家，请根据近期历史开奖数据，利用冷热遗漏、连号、重号、奇偶比、区间分布等专业走势分析手法，精挑细选出一组最高概率的号码。返回严格的数组对象 JSON。不允许重复。';
