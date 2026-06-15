@@ -16,9 +16,10 @@ describe('AI prompt and response helpers', () => {
       ],
     });
 
-    expect(systemInstruction).toContain('走势分析专家');
+    expect(systemInstruction).toContain('走势分析助手');
     expect(prompt).toContain('期号:26047');
     expect(prompt).toContain('生成 1 注号码组合');
+    expect(prompt).toContain('任意两注红球重合不超过 2 个');
   });
 
   it('builds iching prompts with the requested package structure', () => {

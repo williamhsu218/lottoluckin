@@ -1,23 +1,29 @@
 function buildAiPrompt({ mode, pkg, results }) {
   let prompt = '';
   let systemInstruction = '';
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
   if (mode === 'stats') {
     const historySummary = results
       .slice(0, 12)
       .map(r => `期号:${r.lotteryDrawNum} 红球:${r.lotteryDrawResult.substring(0, 14)} 蓝球:${r.lotteryDrawResult.substring(15)}`)
       .join('\n');
-    systemInstruction = '作为中国体彩超级大乐透资深走势分析专家，请根据近期历史开奖数据，利用冷热遗漏、连号、重号、奇偶比、区间分布等专业走势分析手法，精挑细选出一组最高概率的号码。返回严格的数组对象 JSON。不允许重复。';
-    prompt = `下面是近期的开奖历史：\n${historySummary}\n\n请按照不同的复式或单式规则，帮我生成如下要求的号码注数：\n`;
+    systemInstruction = '作为中国体彩超级大乐透走势分析助手，请根据近期历史开奖数据，结合冷热遗漏、连号、重号、奇偶比、区间分布等方法，生成一组分散且有差异的候选号码。不要反复选择同一批热号，不要声称号码有确定中奖概率。返回严格 JSON。';
+    prompt = `下面是近期的开奖历史：\n${historySummary}\n\n生成批次随机因子：${nonce}\n请按照不同的复式或单式规则，帮我生成如下要求的号码注数：\n`;
   } else {
-    systemInstruction = '作为一位精通《易经》理数与先天八卦阵列的大师，请结合当前时辰的八字干支，通过太极生两仪、两仪生四象的推演规律，推测出超级大乐透的吉数。返回严格的数组对象 JSON。不允许重复。';
-    prompt = `当前时间时间戳：${Date.now()}\n请根据易经理数，推演生成如下要求的号码注数：\n`;
+    systemInstruction = '作为一位熟悉《易经》理数与先天八卦阵列的数字推演助手，请结合当前时辰与随机因子，生成一组分散且有差异的超级大乐透候选号码。不要固定套用常见吉数，不要声称号码有确定中奖概率。返回严格 JSON。';
+    prompt = `当前时间时间戳：${Date.now()}\n生成批次随机因子：${nonce}\n请根据易经理数，推演生成如下要求的号码注数：\n`;
   }
 
   pkg.configs.forEach(c => {
     const label = mode === 'stats' ? '号码组合' : '推演号码组合';
     prompt += `- 生成 ${c.count} 注${label}，每一注要求 ${c.f} 个红球(1-35) 和 ${c.b} 个蓝球(1-12)。\n`;
   });
+  prompt += '\n硬性要求：\n';
+  prompt += '- 每一注内部数字必须唯一，红球升序，蓝球升序。\n';
+  prompt += '- 多注之间必须尽量分散：任意两注红球重合不超过 2 个，蓝球重合不超过 1 个；如果是复式，也要尽量减少与其他注的重合。\n';
+  prompt += '- 不要直接复制最近 12 期中的任意一期开奖结果，也不要连续多注使用同一组高频数字。\n';
+  prompt += '- 必须按要求返回足够注数，只返回 {"draws":[{"front":[...],"back":[...]}]}。';
 
   return { prompt, systemInstruction };
 }
@@ -150,7 +156,9 @@ async function generateAiDraws(input) {
             { role: 'system', content: systemInstruction + '\nReturn JSON only. 第一字符必须是 {，不要解释、不要分析、不要 Markdown。JSON schema: {"draws":[{"front":[1,2,3,4,5],"back":[1,2]}]}。front 必须 5 个 1-35 的数字，back 必须 2 个 1-12 的数字。' },
             { role: 'user', content: prompt },
           ],
-          temperature: 0.3,
+          temperature: 0.75,
+          top_p: 0.95,
+          presence_penalty: 0.25,
           max_tokens: 700,
           stream: false,
           thinking: { type: 'disabled' },
