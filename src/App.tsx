@@ -3,6 +3,7 @@ import { Dices, CheckCircle2, History, Database, Sparkles, BarChart3, Activity, 
 import { createClient, type User as SupabaseUser } from '@supabase/supabase-js';
 import RecentHistoryPanel from './components/RecentHistoryPanel';
 import type { Theme } from './components/SettingsModal';
+import { mergeOfficialResults, readStoredOfficialResults } from './shared/official-history';
 import { PACKAGES, formatNumber, type DrawSet, type GenMode, type LottoResult, type PackageDef } from './shared/lottery';
 
 const ConfirmDialog = lazy(() => import('./components/ConfirmDialog'));
@@ -172,7 +173,11 @@ export default function App() {
   };
 
   const fetchOfficialHistory = async () => {
-    let loadedFromCloud = false;
+    const localData = readStoredOfficialResults(localStorage);
+    if (localData.length > 0) {
+      setLotteryResults(localData);
+    }
+
     if (isAdmin && supabase) {
       try {
         const { data, error } = await supabase
@@ -181,22 +186,30 @@ export default function App() {
           .order('lotteryDrawNum', { ascending: false })
           .limit(50);
         if (!error && data && data.length > 0) {
-           setLotteryResults(data);
-           localStorage.setItem('official_lottery_results', JSON.stringify(data));
-           loadedFromCloud = true;
-           return;
+           const merged = mergeOfficialResults(localData, data as LottoResult[]);
+           setLotteryResults(merged);
+           localStorage.setItem('official_lottery_results', JSON.stringify(merged));
         }
       } catch (err: any) {
         console.warn("Failed to fetch official history from cloud:", err);
       }
-    } 
-    
-    // Fallback if not loaded from cloud
-    if (!loadedFromCloud) {
-       try {
-         const localData = JSON.parse(localStorage.getItem('official_lottery_results') || '[]');
-         if (localData.length > 0) setLotteryResults(localData);
-       } catch(e) {}
+    }
+  };
+
+  const persistOfficialResults = async (results: LottoResult[]) => {
+    const merged = mergeOfficialResults(results, lotteryResults, readStoredOfficialResults(localStorage));
+    if (merged.length === 0) return;
+
+    setLotteryResults(merged);
+    localStorage.setItem('official_lottery_results', JSON.stringify(merged));
+
+    if (isCloudReady && supabase) {
+      const { error } = await supabase
+        .from('official_draws')
+        .upsert(merged, { onConflict: 'lotteryDrawNum' });
+      if (error) {
+        console.warn('Failed to sync official history to cloud:', error.message);
+      }
     }
   };
 
@@ -413,8 +426,7 @@ export default function App() {
     }
 
     if (resultsList.length > 0) {
-       setLotteryResults(resultsList);
-       localStorage.setItem('official_lottery_results', JSON.stringify(resultsList));
+       await persistOfficialResults(resultsList);
     }
     
     setIsFetchingResults(false);
